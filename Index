@@ -26,28 +26,25 @@
     .spinner-border { width: 3rem; height: 3rem; border-width: 0.25em; }
 
     /* モーダル修正 (Fullscreen対応) */
-    .modal-fullscreen .modal-body { overflow-y: hidden; } /* Body全体はスクロールさせない */
+    .modal-fullscreen .modal-body { overflow-y: hidden; }
     .modal-title-custom { font-size: 1.25rem; font-weight: bold; color: #333; }
-    .form-label { font-weight: bold; color: #555; font-size: 0.85rem; margin-bottom: 0.1rem; }
-    .form-control-sm-custom { font-size: 0.95rem; padding: 0.4rem 0.5rem; }
+    
+    /* 明細のコンパクト化と視認性向上 */
+    .form-label { font-weight: bold; color: #555; font-size: 0.75rem; margin-bottom: 0.05rem; } /* ラベルを小さく */
+    .form-control-sm-custom { font-size: 0.9rem; padding: 0.3rem 0.5rem; } /* コントロールのサイズ調整 */
     
     /* 明細カードのデザイン */
     .detail-card {
       background-color: #fff;
       border: 1px solid #dee2e6;
       border-radius: 6px;
-      padding: 15px;
-      margin-top: 10px;
+      padding: 10px; /* パディングを小さく */
+      margin-top: 5px; /* マージンを小さく */
       box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
-    .detail-header {
-      font-weight: bold;
-      margin-bottom: 10px;
-      color: #333;
-      font-size: 0.9rem;
-      border-bottom: 1px solid #eee;
-      padding-bottom: 5px;
-    }
+    .detail-card .row.g-3 > div { padding-top: 0.5rem !important; } /* 行間の調整 */
+    .detail-card .bg-light { padding: 8px !important; } /* 金額計算エリアのパディング調整 */
+
     .btn-add-detail {
       border: 1px dashed #198754;
       color: #198754;
@@ -59,10 +56,33 @@
       transition: all 0.2s;
     }
     .btn-add-detail:hover { background: #e0f8e9; }
+    .detail-header-text { font-weight: bold; color: #333; font-size: 0.9rem; }
     
     /* 必須バッジ */
     .badge-required {
       background-color: #dc3545; color: white; font-size: 0.65rem; padding: 2px 5px; border-radius: 3px; margin-left: 5px; vertical-align: middle; position: relative; top: -1px;
+    }
+    
+    /* 編集不可時のスタイル */
+    .is-readonly input, .is-readonly textarea, .is-readonly select {
+        background-color: #e9ecef !important;
+        border: 1px solid #ced4da !important;
+    }
+    /* 金額を太字に */
+    .amount-input-style {
+      font-weight: bold;
+      color: #0d6efd;
+      font-size: 1.1rem !important;
+    }
+    .reject-comment-bubble {
+        background-color: #ffebee;
+        color: #d32f2f;
+        padding: 5px 8px;
+        border-radius: 5px;
+        font-size: 0.8rem;
+        word-break: break-word;
+        max-width: 100%;
+        margin-top: 5px;
     }
   </style>
 </head>
@@ -122,7 +142,7 @@
   </div>
 
   <!-- View: President -->
-  <div id="view-president" class="view-section" style="display:none;"><h3 class="fw-bold text-dark mb-4 border-bottom pb-2"><i class="fas fa-shield-alt text-warning me-2"></i>承認タスク</h3><div class="content-card"><div class="p-3 bg-light border-bottom d-flex justify-content-between"><span class="fw-bold">承認待ち一覧</span><div><button class="btn btn-sm btn-success me-2" onclick="approveSelected()"><i class="fas fa-check me-1"></i>選択を承認</button><button class="btn btn-sm btn-danger" onclick="rejectSelected()"><i class="fas fa-times me-1"></i>選択を差戻し</button></div></div><table class="table table-hover align-middle mb-0"><thead><tr><th width="40"><input type="checkbox" onchange="toggleAllPres(this)"></th><th>申請者</th><th>利用日</th><th>支払先</th><th class="text-end">金額</th></tr></thead><tbody id="presidentBody"></tbody></table></div></div>
+  <div id="view-president" class="view-section" style="display:none;"><h3 class="fw-bold text-dark mb-4 border-bottom pb-2"><i class="fas fa-shield-alt text-warning me-2"></i>承認タスク</h3><div class="content-card"><div class="p-3 bg-light border-bottom d-flex justify-content-between"><span class="fw-bold">承認待ち一覧</span><div><button class="btn btn-sm btn-success me-2" onclick="approveSelected()"><i class="fas fa-check me-1"></i>選択を承認</button><button class="btn btn-sm btn-danger" onclick="rejectSelectedPrepare()"><i class="fas fa-times me-1"></i>選択を差戻し</button></div></div><table class="table table-hover align-middle mb-0"><thead><tr><th width="40"><input type="checkbox" onchange="toggleAllPres(this)"></th><th>申請者</th><th>利用日</th><th>支払先</th><th class="text-end">金額</th></tr></thead><tbody id="presidentBody"></tbody></table></div></div>
 
   <!-- View: Admin -->
   <div id="view-admin" class="view-section" style="display:none;"><h3 class="fw-bold text-dark mb-4 border-bottom pb-2"><i class="fas fa-user-cog text-success me-2"></i>管理者画面</h3><div class="row g-4"><div class="col-md-6"><div class="content-card p-4 h-100"><h5 class="fw-bold mb-4"><i class="fas fa-file-csv me-2"></i>データ出力</h5><button class="btn btn-outline-primary w-100 mb-2 py-2" onclick="alert('CSV作成処理')">勘定奉行用CSV</button><button class="btn btn-outline-success w-100 py-2" onclick="alert('CSV作成処理')">銀行振込用CSV</button></div></div><div class="col-md-6"><div class="content-card p-4 h-100"><h5 class="fw-bold mb-4"><i class="fas fa-tasks me-2"></i>未チェックリスト</h5><div id="adminList" style="max-height:300px; overflow-y:auto;"><p class="text-muted text-center py-5">読み込み中...</p></div><button class="btn btn-dark w-100 mt-3" onclick="checkSelectedAdmin()">チェック済みにする</button></div></div></div></div>
@@ -149,10 +169,10 @@
             
             <!-- Sticky Header -->
             <div class="bg-white border-bottom px-4 py-3 d-flex justify-content-between align-items-center shadow-sm" style="flex-shrink: 0;">
-              <h5 class="modal-title-custom m-0"><i class="fas fa-edit text-primary me-2"></i>AI解析結果の確認・修正</h5>
-              <div>
-                 <button type="button" class="btn btn-outline-secondary me-2" data-bs-dismiss="modal">キャンセル</button>
-                 <button type="button" class="btn btn-primary px-4 fw-bold shadow-sm" onclick="saveEdit()"><i class="fas fa-check me-2"></i>登録完了</button>
+              <!-- ★タイトルを動的に変更 -->
+              <h5 class="modal-title-custom m-0" id="modalTitle"><i class="fas fa-edit text-primary me-2"></i>AI解析結果の確認・修正</h5>
+              <div id="modalActions">
+                <!-- アクションボタンがJSによって動的に配置される -->
               </div>
             </div>
 
@@ -164,7 +184,7 @@
                 <div class="card-body">
                   <div class="row g-3">
                     <div class="col-md-6">
-                      <label class="form-label">申請日 <span class="badge-required">必須</span></label>
+                      <label class="form-label">申請日 <span class="badge-required edit-only">必須</span></label>
                       <input type="date" class="form-control form-control-sm-custom" id="editDate">
                     </div>
                     <div class="col-md-6">
@@ -172,7 +192,7 @@
                       <input type="text" class="form-control form-control-sm-custom bg-light" id="editUser" readonly>
                     </div>
                     <div class="col-12">
-                      <label class="form-label">支払先 <span class="badge-required">必須</span></label>
+                      <label class="form-label">支払先 <span class="badge-required edit-only">必須</span></label>
                       <input type="text" class="form-control form-control-sm-custom" id="editStore" placeholder="店舗名・会社名">
                     </div>
                     
@@ -180,13 +200,13 @@
                        <div class="row g-3 align-items-center">
                           <div class="col-md-5">
                             <div class="form-check">
-                              <input class="form-check-input" type="checkbox" id="editInvoice">
+                              <input type="checkbox" id="editInvoice" class="form-check-input">
                               <label class="form-check-label fw-bold small" for="editInvoice">インボイス番号あり</label>
                             </div>
                           </div>
                           <div class="col-md-7">
                             <label class="form-label small text-muted d-block text-end mb-1">領収書合計 (税込)</label>
-                            <input type="number" class="form-control text-end fw-bold fs-5 text-primary" id="editAmount" placeholder="0">
+                            <input type="number" class="form-control text-end amount-input-style" id="editAmount" placeholder="0">
                           </div>
                        </div>
                     </div>
@@ -199,71 +219,38 @@
                 </div>
               </div>
 
-              <!-- 明細エリア -->
-              <div class="detail-card">
-                <div class="detail-header"><i class="fas fa-list me-2"></i>明細入力</div>
-                
-                <div class="row g-3">
-                  <div class="col-12">
-                    <label class="form-label">勘定科目</label>
-                    <input type="text" class="form-control form-control-sm-custom" id="editCat" list="categoryList" placeholder="科目を選択" oninput="checkEntertainmentExpense()">
-                  </div>
-                  
-                  <div class="col-12">
-                    <label class="form-label">品目</label>
-                    <input type="text" class="form-control form-control-sm-custom" id="editItem" placeholder="品名">
-                  </div>
-                  
-                  <div class="col-md-6">
-                    <label class="form-label">取引先</label>
-                    <input type="text" class="form-control form-control-sm-custom" id="editClient" placeholder="相手先">
-                  </div>
-                  <div class="col-md-6">
-                    <label class="form-label">参加人数</label>
-                    <input type="text" class="form-control form-control-sm-custom" id="editParticipants" placeholder="例: 4名" oninput="checkEntertainmentExpense()">
-                  </div>
-
-                  <!-- 金額計算エリア -->
-                  <div class="col-12 bg-light p-3 rounded mt-3">
-                    <div class="row g-3">
-                      <div class="col-md-6">
-                        <label class="form-label text-primary">金額（税込）</label>
-                        <input type="number" class="form-control form-control-sm-custom text-end fw-bold" id="editDetailAmount" placeholder="0" oninput="calculateTax(); checkEntertainmentExpense()">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label">消費税率</label>
-                        <select class="form-select form-select-sm" id="editTaxRate" onchange="calculateTax()">
-                          <option value="0.10" selected>10%</option>
-                          <option value="0.08">8%</option>
-                          <option value="0">0%</option>
-                        </select>
-                      </div>
-
-                      <div class="col-md-6">
-                        <label class="form-label small text-muted">税抜合計</label>
-                        <input type="number" class="form-control form-control-sm text-end bg-white" id="editTaxExcluded" readonly>
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label small text-muted">消費税</label>
-                        <input type="number" class="form-control form-control-sm text-end bg-white" id="editTax" readonly>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="col-12">
-                    <label class="form-label">メモ（明細）</label>
-                    <textarea class="form-control form-control-sm" id="editMemo" rows="2" placeholder="詳細メモ"></textarea>
-                  </div>
-                </div>
+              <!-- 明細エリア (動的な部分) -->
+              <h5 class="detail-header-text mb-2 mt-4"><i class="fas fa-list me-2"></i>明細入力</h5>
+              <div id="detailItemsContainer">
+                <!-- 明細カードがJavaScriptによりここに追加される -->
               </div>
-
-              <!-- <div class="mt-3">
-                <button type="button" class="btn-add-detail"><i class="fas fa-plus me-1"></i>明細を追加 (未実装)</button>
-              </div> -->
+              
+              <div class="mt-3 edit-only">
+                <button type="button" class="btn-add-detail" onclick="addDetailItem()"><i class="fas fa-plus me-1"></i>明細を追加</button>
+              </div>
 
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+<!-- Reject Comment Modal -->
+<div class="modal fade" id="rejectCommentModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title text-danger"><i class="fas fa-exclamation-triangle me-2"></i>差戻しコメント入力</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>選択された申請を差し戻します。理由を必ず入力してください。</p>
+        <textarea class="form-control" id="rejectCommentInput" rows="4" placeholder="例: 添付ファイルが見当たらない、勘定科目が不適切"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+        <button type="button" class="btn btn-danger" onclick="rejectSelectedConfirm()">差戻し実行</button>
       </div>
     </div>
   </div>
@@ -274,7 +261,13 @@
 <script>
 let currentUser = null;
 let historyData = [];
+let detailData = []; // ★明細データを保持する配列
 const editModal = new bootstrap.Modal(document.getElementById('editModal'));
+const rejectModal = new bootstrap.Modal(document.getElementById('rejectCommentModal'));
+
+// ★複数ファイルアップロード用のグローバル変数
+let pendingDrafts = [];
+let currentDraftIndex = -1;
 
 window.onload = function() {
   showLoading(true, 'ユーザー情報取得中...');
@@ -322,15 +315,25 @@ function handleFiles(files) {
   if(!files.length) return;
   showLoading(true, `AI解析中... (0/${files.length})`);
   let completed = 0;
-  let lastResult = null;
+  
+  // ★複数ファイル対応のための初期化
+  pendingDrafts = [];
+  currentDraftIndex = -1;
 
   const processNext = (index) => {
     if(index >= files.length) {
       showLoading(false);
-      if (lastResult) {
-        loadHistory();
-        openEditWithData(lastResult);
+      
+      // ★複数ファイルの場合、編集ワークフローを開始
+      if (pendingDrafts.length > 0) {
+        // 全ファイルの下書き保存が完了したら、履歴をリロードし、編集ワークフローを開始
+        loadHistory(() => {
+            // historyDataから、pendingDraftsのIDを持つデータを取得し直す
+            pendingDrafts = pendingDrafts.map(draft => historyData.find(r => r.id === draft.id)).filter(Boolean);
+            startMultiDraftEdit();
+        });
       } else {
+        // エラーなどで1件も保存できなかった場合
         switchView('history');
       }
       return;
@@ -341,7 +344,10 @@ function handleFiles(files) {
       const payload = { fileName: file.name, mimeType: file.type, base64: e.target.result.split(',')[1], userName: currentUser.name };
       google.script.run.withSuccessHandler((res) => {
         completed++;
-        if(res && res.success) lastResult = res;
+        if(res && res.success) {
+            // 成功した下書きデータを配列に追加
+            pendingDrafts.push(res);
+        }
         document.getElementById('loadingText').textContent = `AI解析中... (${completed}/${files.length})`;
         processNext(index + 1);
       }).withFailureHandler(err => {
@@ -353,6 +359,16 @@ function handleFiles(files) {
     reader.readAsDataURL(file);
   };
   processNext(0);
+}
+
+// ★複数ファイル編集ワークフロー開始
+function startMultiDraftEdit() {
+    if (pendingDrafts.length === 0) {
+        switchView('history');
+        return;
+    }
+    currentDraftIndex = 0;
+    openEditWithData(pendingDrafts[currentDraftIndex], true);
 }
 
 function loadHistory(callback) {
@@ -369,9 +385,34 @@ function renderHistoryTable(data) {
   if(data.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">履歴がありません</td></tr>'; return; }
   const statusBadges = { draft: '<span class="badge bg-secondary">未申請</span>', pending: '<span class="badge bg-warning text-dark">承認待ち</span>', approved: '<span class="badge bg-primary">社長承認済</span>', checked: '<span class="badge bg-success">経理確認済</span>', rejected: '<span class="badge bg-danger">差戻し</span>' };
   data.forEach(row => {
-    const isDraft = row.status === 'draft';
+    // ★差し戻しの場合も編集を許可する
+    const isDraftOrRejected = row.status === 'draft' || row.status === 'rejected';
+    
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="text-center">${isDraft ? `<input type="checkbox" class="form-check-input history-check" value="${row.id}" onchange="updateBulkBtn()">` : ''}</td><td>${row.date}</td><td><div class="fw-bold">${row.store}</div></td><td><div>${row.items[0]?.category||'-'}</div><div class="small text-muted">${row.items[0]?.item||''}</div></td><td class="text-end fw-bold font-monospace">¥${Number(row.amount).toLocaleString()}</td><td class="text-center">${statusBadges[row.status]||row.status}</td><td class="text-center">${isDraft ? `<button class="btn btn-link btn-sm p-0 me-2" onclick="openEditFromHistory('${row.id}')">修正</button><button class="btn btn-link btn-sm p-0 text-danger" onclick="deleteApp('${row.id}')">削除</button>` : `<span class="text-muted small">-</span>`}</td>`;
+    
+    // ★操作ボタンを修正
+    let actionButton;
+    if (isDraftOrRejected) {
+        actionButton = `<button class="btn btn-link btn-sm p-0 me-2" onclick="openEditFromHistory('${row.id}', true)">修正</button><button class="btn btn-link btn-sm p-0 text-danger" onclick="deleteApp('${row.id}')">削除</button>`;
+    } else {
+        // 社長ロールまたは一般ユーザーの申請済みは「詳細確認」
+        const isApprover = currentUser.role === '社長' || currentUser.role === '経理';
+        const isSelf = row.user === currentUser.name;
+        
+        if (isApprover || isSelf) {
+            actionButton = `<button class="btn btn-link btn-sm p-0 text-primary" onclick="openEditFromHistory('${row.id}', false)">詳細確認</button>`;
+        } else {
+            actionButton = `<span class="text-muted small">-</span>`;
+        }
+    }
+    
+    // ★ステータス表示に差し戻しコメントを追加
+    let statusCell = statusBadges[row.status] || row.status;
+    if (row.status === 'rejected' && row.rejectComment) {
+        statusCell += `<div class="reject-comment-bubble"><i class="fas fa-comment-dots me-1"></i> ${row.rejectComment}</div>`;
+    }
+    
+    tr.innerHTML = `<td class="text-center">${row.status === 'draft' ? `<input type="checkbox" class="form-check-input history-check" value="${row.id}" onchange="updateBulkBtn()">` : ''}</td><td>${row.date}</td><td><div class="fw-bold">${row.store}</div></td><td><div>${row.items[0]?.category||'-'}</div><div class="small text-muted">${row.items[0]?.item||''}</div></td><td class="text-end fw-bold font-monospace">¥${Number(row.amount).toLocaleString()}</td><td class="text-center">${statusCell}</td><td class="text-center">${actionButton}</td>`;
     tbody.appendChild(tr);
   });
   updateBulkBtn();
@@ -390,7 +431,12 @@ function submitBulk() {
   google.script.run.withSuccessHandler(() => { showLoading(false); loadHistory(); }).submitBulkApplications(ids);
 }
 
-function openEditFromHistory(id) {
+// ★修正: isEditModeフラグを追加
+function openEditFromHistory(id, isEditMode) {
+  // 複数編集ワークフローをリセット
+  pendingDrafts = [];
+  currentDraftIndex = -1;
+  
   const row = historyData.find(r => r.id === id);
   if(!row) return;
   
@@ -401,56 +447,56 @@ function openEditFromHistory(id) {
     amount: row.amount,
     hasInvoice: row.hasInvoice,
     fileId: row.fileId,
-    // 履歴データにはGlobalMemoが含まれていない場合があるため注意（GAS側も要確認）
-    // 現状はGlobalMemoは明細のMemoで代用するか、GASを修正して親のMemoを取得する必要がある
-    // ここでは便宜上空文字
-    globalMemo: '', 
+    globalMemo: row.globalMemo || '', 
     items: row.items.length > 0 ? row.items : [{category: '', item: '', amount: 0, client: '', participants: '', memo: ''}]
   };
-  openEditWithData(data);
+  openEditWithData(data, isEditMode);
 }
 
 // 自動計算ロジック
-function calculateTax() {
-  const amount = parseFloat(document.getElementById('editDetailAmount').value) || 0;
-  const rate = parseFloat(document.getElementById('editTaxRate').value) || 0;
+function calculateTax(index) {
+  const container = document.getElementById(`detail-card-${index}`);
+  const amountInput = container.querySelector('.editDetailAmount');
+  const rateSelect = container.querySelector('.editTaxRate');
+  const excludedInput = container.querySelector('.editTaxExcluded');
+  const taxInput = container.querySelector('.editTax');
+  
+  const amount = parseFloat(amountInput.value) || 0;
+  const rate = parseFloat(rateSelect.value) || 0;
   
   if (amount > 0) {
     const tax = Math.round(amount - (amount / (1 + rate)));
     const excluded = amount - tax;
     
-    document.getElementById('editTaxExcluded').value = excluded;
-    document.getElementById('editTax').value = tax;
+    excludedInput.value = excluded;
+    taxInput.value = tax;
   } else {
-    document.getElementById('editTaxExcluded').value = '';
-    document.getElementById('editTax').value = '';
+    excludedInput.value = '';
+    taxInput.value = '';
   }
 }
 
 // 接待交際費の自動判定ロジック
-function checkEntertainmentExpense() {
-  const catInput = document.getElementById('editCat');
-  const amountInput = document.getElementById('editDetailAmount');
-  const participantsInput = document.getElementById('editParticipants');
+function checkEntertainmentExpense(index) {
+  const container = document.getElementById(`detail-card-${index}`);
+  const catInput = container.querySelector('.editCat');
+  const amountInput = container.querySelector('.editDetailAmount');
+  const participantsInput = container.querySelector('.editParticipants');
 
   let category = catInput.value;
-  // 接待交際費関連でなければ処理しない
   if (category !== '接待交際費' && category !== '少額接待交際費') return;
 
   const amount = parseFloat(amountInput.value) || 0;
-  // 人数から数字以外を除去して数値化 (全角数字対応)
   const participantsStr = participantsInput.value.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/[^0-9]/g, '');
   const participants = parseInt(participantsStr) || 0;
 
   if (amount > 0 && participants > 0) {
     const perPerson = amount / participants;
-    // 1人あたり1万円以下なら少額接待交際費
     if (perPerson <= 10000) {
       if (category !== '少額接待交際費') {
         catInput.value = '少額接待交際費';
       }
     } else {
-      // 1万円超なら通常の接待交際費
       if (category !== '接待交際費') {
         catInput.value = '接待交際費';
       }
@@ -458,39 +504,168 @@ function checkEntertainmentExpense() {
   }
 }
 
-// 編集モーダルを開く
-function openEditWithData(data) {
+// 明細アイテムのHTMLテンプレート
+function getDetailItemTemplate(item, index, isReadOnly) {
+  // item: { id:..., category:..., item:..., amount:..., client:..., participants:..., memo:... }
+  const itemAmount = item.amount || '';
+  const taxRate = '0.10'; // 一旦固定
+  const readonlyAttr = isReadOnly ? 'readonly' : '';
+  const inputClass = isReadOnly ? 'bg-light' : '';
+
+  // 税額計算 (初期値用)
+  const initialAmount = parseFloat(itemAmount) || 0;
+  const initialRate = parseFloat(taxRate) || 0;
+  const initialTax = initialAmount > 0 ? Math.round(initialAmount - (initialAmount / (1 + initialRate))) : '';
+  const initialExcluded = initialAmount > 0 ? initialAmount - initialTax : '';
+
+  return `
+    <div class="detail-card mb-3 ${isReadOnly ? 'is-readonly' : ''}" id="detail-card-${index}">
+      <div class="d-flex justify-content-between align-items-center mb-2" style="border-bottom: 1px solid #eee; padding-bottom: 5px;">
+        <span class="detail-header-text"><i class="fas fa-list-ul me-2"></i>明細 ${index + 1}</span>
+        ${isReadOnly ? '' : `<button type="button" class="btn btn-sm btn-outline-danger p-0 px-2" onclick="removeDetailItem(${index})" style="line-height: 1;"><i class="fas fa-trash-alt me-1"></i>削除</button>`}
+      </div>
+      
+      <div class="row g-3">
+        <div class="col-12">
+          <label class="form-label">勘定科目</label>
+          <input type="text" class="form-control form-control-sm-custom editCat ${inputClass}" list="categoryList" placeholder="科目を選択" value="${item.category || ''}" oninput="checkEntertainmentExpense(${index})" ${readonlyAttr}>
+        </div>
+        
+        <div class="col-12">
+          <label class="form-label">品目</label>
+          <input type="text" class="form-control form-control-sm-custom editItem ${inputClass}" placeholder="品名" value="${item.item || ''}" ${readonlyAttr}>
+        </div>
+        
+        <div class="col-md-6">
+          <label class="form-label">取引先</label>
+          <input type="text" class="form-control form-control-sm-custom editClient ${inputClass}" placeholder="相手先" value="${item.client || ''}" ${readonlyAttr}>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">参加人数</label>
+          <input type="text" class="form-control form-control-sm-custom editParticipants ${inputClass}" placeholder="例: 4名" value="${item.participants || ''}" oninput="checkEntertainmentExpense(${index})" ${readonlyAttr}>
+        </div>
+
+        <!-- 金額計算エリア -->
+        <div class="col-12 bg-light p-3 rounded mt-3">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label text-primary">金額（税込）</label>
+              <input type="number" class="form-control form-control-sm-custom text-end amount-input-style ${inputClass}" placeholder="0" value="${itemAmount}" oninput="calculateTax(${index}); checkEntertainmentExpense(${index})" ${readonlyAttr}>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">消費税率</label>
+              <select class="form-select form-select-sm editTaxRate ${inputClass}" onchange="calculateTax(${index})" ${readonlyAttr}>
+                <option value="0.10" ${taxRate === '0.10' ? 'selected' : ''}>10%</option>
+                <option value="0.08" ${taxRate === '0.08' ? 'selected' : ''}>8%</option>
+                <option value="0" ${taxRate === '0' ? 'selected' : ''}>0%</option>
+              </select>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label small text-muted">税抜合計</label>
+              <input type="number" class="form-control form-control-sm text-end bg-white editTaxExcluded" value="${initialExcluded}" readonly>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-muted">消費税</label>
+              <input type="number" class="form-control form-control-sm text-end bg-white editTax" value="${initialTax}" readonly>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">メモ（明細）</label>
+          <textarea class="form-control form-control-sm editMemo ${inputClass}" rows="2" placeholder="詳細メモ" ${readonlyAttr}>${item.memo || ''}</textarea>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 明細の動的な描画
+function renderDetailItems(isReadOnly) {
+  const container = document.getElementById('detailItemsContainer');
+  container.innerHTML = '';
+  detailData.forEach((item, index) => {
+    container.innerHTML += getDetailItemTemplate(item, index, isReadOnly);
+  });
+}
+
+// 新しい明細を追加
+function addDetailItem() {
+  const newItem = { category: '', item: '', amount: '', client: '', participants: '', memo: '' };
+  detailData.push(newItem);
+  renderDetailItems(false); // 編集モードで再描画
+}
+
+// 明細を削除
+function removeDetailItem(index) {
+  if(detailData.length === 1) {
+    alert("明細は最低1つ必要です。");
+    return;
+  }
+  detailData.splice(index, 1);
+  renderDetailItems(false); // 編集モードで再描画
+}
+
+
+// ★修正: openEditWithData関数にisEditModeフラグを追加
+function openEditWithData(data, isEditMode) {
+  const modalTitle = document.getElementById('modalTitle');
+  const modalActions = document.getElementById('modalActions');
+  const formControls = document.querySelectorAll('#editModal input, #editModal select, #editModal textarea');
+  const editOnlyElements = document.querySelectorAll('#editModal .edit-only');
+
+  // モーダル全体の状態を設定
+  if (isEditMode) {
+      modalTitle.innerHTML = `<i class="fas fa-edit text-primary me-2"></i>AI解析結果の確認・修正`;
+      
+      // ★マルチドラフト編集中の場合、ボタンを「次へ」に変更
+      const isMultiDraft = pendingDrafts.length > 0;
+      const remainingDrafts = pendingDrafts.length - (currentDraftIndex + 1);
+      
+      if (isMultiDraft && remainingDrafts > 0) {
+          modalActions.innerHTML = `<button type="button" class="btn btn-outline-secondary me-2" onclick="cancelEdit(true)">キャンセル</button><button type="button" class="btn btn-warning px-4 fw-bold shadow-sm" onclick="saveAndNextDraft()">次へ <span class="badge bg-light text-warning ms-1">${remainingDrafts}</span> <i class="fas fa-arrow-right ms-1"></i></button>`;
+          modalTitle.innerHTML = `<i class="fas fa-edit text-primary me-2"></i>領収書編集中 (${currentDraftIndex + 1}/${pendingDrafts.length}枚目)`;
+      } else {
+          // 最後の1枚、または履歴からの単独編集の場合
+          modalActions.innerHTML = `<button type="button" class="btn btn-outline-secondary me-2" onclick="cancelEdit(false)">キャンセル</button><button type="button" class="btn btn-primary px-4 fw-bold shadow-sm" onclick="saveEdit()"><i class="fas fa-check me-2"></i>登録完了</button>`;
+      }
+      
+      formControls.forEach(el => { el.removeAttribute('readonly'); el.classList.remove('bg-light'); });
+      editOnlyElements.forEach(el => el.style.display = 'inline');
+
+  } else { // 詳細確認モード (社長/申請済みユーザー)
+      modalTitle.innerHTML = `<i class="fas fa-eye text-success me-2"></i>登録詳細の確認 (ID: ${data.id.substring(0, 8)}...)`;
+      modalActions.innerHTML = `<button type="button" class="btn btn-outline-secondary me-2" data-bs-dismiss="modal">閉じる</button>`;
+      
+      // 編集不可にする
+      formControls.forEach(el => { 
+          if(el.id !== 'editUser' && el.id !== 'editTaxExcluded' && el.id !== 'editTax') {
+              el.setAttribute('readonly', true);
+              el.classList.add('bg-light');
+          }
+      });
+      // 必須マークや追加ボタンを非表示に
+      editOnlyElements.forEach(el => el.style.display = 'none');
+  }
+
   document.getElementById('editId').value = data.id || '';
   document.getElementById('editDate').value = data.date || '';
-  document.getElementById('editUser').value = currentUser ? currentUser.name : 'Guest'; // 使用者はログインユーザー固定
+  document.getElementById('editUser').value = data.user || (currentUser ? currentUser.name : 'Guest'); // ★修正: data.userを優先
   document.getElementById('editStore').value = data.store || '';
   document.getElementById('editAmount').value = data.amount || '';
   document.getElementById('editInvoice').checked = !!data.hasInvoice;
-  document.getElementById('editGlobalMemo').value = data.globalMemo || ''; // 現状GASからは返ってきていない
+  document.getElementById('editGlobalMemo').value = data.globalMemo || '';
   
-  // 明細（1行目のみ処理）
+  // ★明細データを初期化し、描画 (isEditModeを渡す)
   if(data.items && data.items.length > 0) {
-    const item = data.items[0];
-    document.getElementById('editCat').value = item.category || '';
-    document.getElementById('editItem').value = item.item || '';
-    document.getElementById('editDetailAmount').value = item.amount || data.amount || '';
-    document.getElementById('editClient').value = item.client || '';
-    document.getElementById('editParticipants').value = item.participants || '';
-    document.getElementById('editMemo').value = item.memo || '';
-    
-    // 値セット後に計算実行
-    calculateTax();
+    detailData = JSON.parse(JSON.stringify(data.items));
   } else {
-    document.getElementById('editCat').value = '';
-    document.getElementById('editItem').value = '';
-    document.getElementById('editDetailAmount').value = '';
-    document.getElementById('editClient').value = '';
-    document.getElementById('editParticipants').value = '';
-    document.getElementById('editMemo').value = '';
-    document.getElementById('editTaxExcluded').value = '';
-    document.getElementById('editTax').value = '';
+    detailData = [{category: '', item: '', amount: '', client: '', participants: '', memo: ''}];
   }
 
+  renderDetailItems(!isEditMode);
+  
   const previewFrame = document.getElementById('previewFrame');
   const noPreview = document.getElementById('noPreview');
   
@@ -507,40 +682,215 @@ function openEditWithData(data) {
   editModal.show();
 }
 
-function saveEdit() {
-  const payload = {
-    id: document.getElementById('editId').value,
-    useDate: document.getElementById('editDate').value,
-    storeName: document.getElementById('editStore').value,
-    totalAmount: document.getElementById('editAmount').value,
-    hasInvoice: document.getElementById('editInvoice').checked,
-    // 親メモはGAS側で対応していれば送るが、今回は明細のメモに集約するか、GAS改修が必要。
-    // 今回は既存の「明細」にすべて押し込む形にする
-    items: [{ 
-      category: document.getElementById('editCat').value, 
-      itemName: document.getElementById('editItem').value, 
-      total_price: document.getElementById('editDetailAmount').value || document.getElementById('editAmount').value,
-      client: document.getElementById('editClient').value,
-      participants: document.getElementById('editParticipants').value,
-      memo: document.getElementById('editMemo').value
-    }]
-  };
-  showLoading(true, '保存中...');
-  google.script.run.withSuccessHandler(() => {
-    showLoading(false);
-    editModal.hide();
-    switchView('history'); 
-  }).updateApplication(payload);
+function cancelEdit(isMultiDraft) {
+    if (isMultiDraft) {
+        if (confirm("複数編集を中止しますか？未保存の修正は破棄されます。")) {
+            pendingDrafts = [];
+            currentDraftIndex = -1;
+            editModal.hide();
+            switchView('history');
+        }
+    } else {
+        editModal.hide();
+    }
 }
+
+// UI上の現在の編集内容をJSON形式で取得
+function getFormPayload() {
+    const updatedItems = [];
+    const itemContainers = document.querySelectorAll('#detailItemsContainer .detail-card');
+
+    itemContainers.forEach(container => {
+        const amount = parseFloat(container.querySelector('.editDetailAmount').value) || 0;
+
+        updatedItems.push({
+            category: container.querySelector('.editCat').value, 
+            itemName: container.querySelector('.editItem').value, 
+            total_price: amount, 
+            client: container.querySelector('.editClient').value,
+            participants: container.querySelector('.editParticipants').value,
+            memo: container.querySelector('.editMemo').value
+        });
+    });
+
+    const payload = {
+        id: document.getElementById('editId').value,
+        useDate: document.getElementById('editDate').value,
+        storeName: document.getElementById('editStore').value,
+        totalAmount: document.getElementById('editAmount').value, 
+        hasInvoice: document.getElementById('editInvoice').checked,
+        globalMemo: document.getElementById('editGlobalMemo').value, 
+        items: updatedItems
+    };
+    return payload;
+}
+
+// 必須チェック
+function validatePayload(payload) {
+    if (!payload.useDate || !payload.storeName || !payload.totalAmount) {
+        alert("申請日、支払先、領収書合計金額は必須です。");
+        return false;
+    }
+    if (payload.items.some(item => !item.category || !item.itemName)) {
+        alert("すべての明細について、勘定科目と品目を入力してください。");
+        return false;
+    }
+    return true;
+}
+
+
+// ★登録完了ボタンの処理 (最後の1枚または単独編集)
+function saveEdit() {
+    const payload = getFormPayload();
+    if (!validatePayload(payload)) return;
+
+    showLoading(true, '保存中...');
+    
+    google.script.run.withSuccessHandler(() => {
+        // ★修正: 登録完了時にローディング解除、モーダルクローズ、履歴更新を確実に行う
+        showLoading(false);
+        editModal.hide();
+        loadHistory();
+        switchView('history'); 
+    }).withFailureHandler(err => {
+        showLoading(false); 
+        alert("登録中にエラーが発生しました: " + err);
+    }).updateApplication(payload);
+}
+
+// ★次へボタンの処理
+function saveAndNextDraft() {
+    const payload = getFormPayload();
+    if (!validatePayload(payload)) return;
+
+    showLoading(true, `下書き保存中... (${currentDraftIndex + 1}/${pendingDrafts.length})`);
+
+    google.script.run.withSuccessHandler(() => {
+        // 1. 次のドラフトへインデックスを進める
+        currentDraftIndex++;
+        
+        // 2. 履歴をリロード (最新のデータを取得するため)
+        loadHistory(() => {
+            showLoading(false);
+            
+            // 3. 次のドラフトを開く
+            if (currentDraftIndex < pendingDrafts.length) {
+                // pendingDraftsのIDを元に、historyDataから最新の完全なデータを取得し直す
+                const nextDraftId = pendingDrafts[currentDraftIndex].id;
+                const nextDraftData = historyData.find(r => r.id === nextDraftId);
+                
+                if (nextDraftData) {
+                    openEditWithData(nextDraftData, true); // 次の編集画面を開く
+                } else {
+                    alert("次のデータが見つかりませんでした。ワークフローを終了します。");
+                    pendingDrafts = [];
+                    currentDraftIndex = -1;
+                    editModal.hide();
+                    switchView('history');
+                }
+            } else {
+                // 全てのドラフトの編集が完了
+                pendingDrafts = [];
+                currentDraftIndex = -1;
+                editModal.hide();
+                switchView('history');
+                alert("すべての領収書の登録が完了しました。");
+            }
+        });
+
+    }).withFailureHandler(err => {
+        showLoading(false); 
+        alert("下書き保存中にエラーが発生しました: " + err);
+    }).updateApplication(payload);
+}
+
 
 function deleteApp(id) { if(!confirm('削除しますか？')) return; showLoading(true); google.script.run.withSuccessHandler(() => { showLoading(false); loadHistory(); }).deleteApplication(id); }
 
-function loadPresidentData() { google.script.run.withSuccessHandler(data => { const tbody = document.getElementById('presidentBody'); tbody.innerHTML = data.map(r => `<tr><td><input type="checkbox" class="pres-check" value="${r.id}"></td><td>${r.user}</td><td>${r.date}</td><td>${r.store}</td><td class="text-end">¥${Number(r.amount).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="5" class="text-center p-4">なし</td></tr>'; }).getHistoryData({view: 'president'}); }
+// ★差戻し準備: コメントモーダルを表示 (社長画面のボタンから呼び出される)
+function rejectSelectedPrepare() {
+  const ids = Array.from(document.querySelectorAll('.pres-check:checked')).map(c => c.value);
+  if(ids.length === 0) {
+    alert("差戻し対象を選択してください。");
+    return;
+  }
+  // 処理対象IDを一時的に保持
+  document.getElementById('rejectCommentInput').dataset.rejectIds = JSON.stringify(ids);
+  document.getElementById('rejectCommentInput').value = '';
+  rejectModal.show();
+}
+
+// ★差戻し実行: コメントを付けて処理
+function rejectSelectedConfirm() {
+  const ids = JSON.parse(document.getElementById('rejectCommentInput').dataset.rejectIds);
+  const comment = document.getElementById('rejectCommentInput').value.trim();
+  
+  if (!comment) {
+    alert("差戻しコメントは必須です。");
+    return;
+  }
+  
+  rejectModal.hide();
+  showLoading(true, '差戻し処理中...');
+  
+  // GAS側にIDsとコメントを渡す関数を呼び出す
+  google.script.run.withSuccessHandler(() => { 
+    showLoading(false); 
+    loadPresidentData(); 
+    // historyDataをリロードして、申請者が最新の状態を確認できるようにする
+    loadHistory(); 
+  }).withFailureHandler(err => {
+      showLoading(false); // エラー時もローディングを解除
+      alert("差戻し中にエラーが発生しました: " + err);
+  }).rejectBulkWithComment(ids, comment);
+}
+
+
+// ★社長承認画面のリストから詳細確認を開く機能を追加 (isEditMode: false)
+function openPresidentDetail(id) {
+  // 承認待ちデータはhistoryDataに含まれない可能性があるため、GASから直接取得を試みる
+  google.script.run.withSuccessHandler(data => {
+      if (data) {
+          openEditWithData(data, false); // 詳細確認モード
+      } else {
+          alert("データが見つかりませんでした。");
+      }
+  }).getSingleApplicationData(id);
+}
+
+
+function loadPresidentData() { 
+  google.script.run.withSuccessHandler(data => { 
+    const tbody = document.getElementById('presidentBody'); 
+    // ★承認待ちリストの申請者名にクリックイベントを設定
+    tbody.innerHTML = data.map(r => `<tr><td><input type="checkbox" class="pres-check" value="${r.id}"></td><td><button class="btn btn-link btn-sm p-0 me-2" onclick="openPresidentDetail('${r.id}')">${r.user}</button></td><td>${r.date}</td><td>${r.store}</td><td class="text-end">¥${Number(r.amount).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="5" class="text-center p-4">なし</td></tr>'; 
+  }).getHistoryData({view: 'president'}); 
+}
+// ★承認画面の全選択機能を追加
+function toggleAllPres(source) {
+  document.querySelectorAll('.pres-check').forEach(c => c.checked = source.checked);
+}
+
 function loadAdminData() { google.script.run.withSuccessHandler(data => { const div = document.getElementById('adminList'); div.innerHTML = data.map(r => `<div class="d-flex justify-content-between border-bottom p-2"><div><input type="checkbox" class="admin-check me-2" value="${r.id}"><span class="fw-bold">${r.user}</span> - ${r.store}</div><span class="font-monospace">¥${Number(r.amount).toLocaleString()}</span></div>`).join('') || '<p class="text-center p-3">未チェックデータなし</p>'; }).getHistoryData({view: 'admin'}); }
 function approveSelected() { processBulk('approveBulk', '.pres-check'); }
-function rejectSelected() { processBulk('rejectBulk', '.pres-check'); }
 function checkSelectedAdmin() { processBulk('checkBulk', '.admin-check'); }
-function processBulk(funcName, selector) { const ids = Array.from(document.querySelectorAll(`${selector}:checked`)).map(c => c.value); if(ids.length === 0) return; showLoading(true); google.script.run.withSuccessHandler(() => { showLoading(false); if(funcName.includes('check')) loadAdminData(); else loadPresidentData(); })[funcName](ids); }
+function processBulk(funcName, selector) { 
+    const ids = Array.from(document.querySelectorAll(`${selector}:checked`)).map(c => c.value); 
+    if(ids.length === 0) return; 
+    
+    // rejectSelectedPrepare() から呼び出されるため、rejectBulk の場合は何もしない
+    if (funcName === 'rejectBulk') { return; } 
+    
+    showLoading(true); 
+    google.script.run.withSuccessHandler(() => { 
+        showLoading(false); 
+        if(funcName.includes('check')) loadAdminData(); 
+        else loadPresidentData(); 
+    }).withFailureHandler(err => {
+        showLoading(false);
+        alert("一括処理中にエラーが発生しました: " + err);
+    })[funcName](ids); 
+}
 function loadMasters() { google.script.run.withSuccessHandler(data => { const dl = document.getElementById('categoryList'); dl.innerHTML = data.accounts.map(a => `<option value="${a}">`).join(''); }).getMasters(); }
 function showLoading(show, text) { document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none'; if(text) document.getElementById('loadingText').textContent = text; }
 </script>
