@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>クレジット精算アプリ</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <style>
@@ -142,10 +143,55 @@
   </div>
 
   <!-- View: President -->
-  <div id="view-president" class="view-section" style="display:none;"><h3 class="fw-bold text-dark mb-4 border-bottom pb-2"><i class="fas fa-shield-alt text-warning me-2"></i>承認タスク</h3><div class="content-card"><div class="p-3 bg-light border-bottom d-flex justify-content-between"><span class="fw-bold">承認待ち一覧</span><div><button class="btn btn-sm btn-success me-2" onclick="approveSelected()"><i class="fas fa-check me-1"></i>選択を承認</button><button class="btn btn-sm btn-danger" onclick="rejectSelectedPrepare()"><i class="fas fa-times me-1"></i>選択を差戻し</button></div></div><table class="table table-hover align-middle mb-0"><thead><tr><th width="40"><input type="checkbox" onchange="toggleAllPres(this)"></th><th>申請者</th><th>利用日</th><th>支払先</th><th class="text-end">金額</th></tr></thead><tbody id="presidentBody"></tbody></table></div></div>
+  <div id="view-president" class="view-section" style="display:none;">
+    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-2">
+      <h3 class="fw-bold text-dark m-0"><i class="fas fa-shield-alt text-warning me-2"></i>承認タスク</h3>
+      <button class="btn btn-outline-primary btn-sm" onclick="loadPresidentData()"><i class="fas fa-sync-alt"></i> 更新</button>
+    </div>
+    <div class="content-card">
+      <div class="p-3 bg-light border-bottom d-flex justify-content-between">
+        <span class="fw-bold">承認待ち一覧</span>
+        <div>
+          <button class="btn btn-sm btn-success me-2" onclick="approveSelected()"><i class="fas fa-check me-1"></i>選択を承認</button>
+          <!-- ★修正: rejectSelectedPrepareを呼び出す -->
+          <button class="btn btn-sm btn-danger" onclick="rejectSelectedPrepare()"><i class="fas fa-times me-1"></i>選択を差戻し</button>
+        </div>
+      </div>
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th width="40"><input type="checkbox" onchange="toggleAllPres(this)"></th>
+            <th>申請者</th>
+            <th>利用日</th>
+            <th>支払先</th>
+            <th class="text-end">金額</th>
+          </tr>
+        </thead>
+        <tbody id="presidentBody"></tbody>
+      </table>
+    </div>
+  </div>
 
   <!-- View: Admin -->
-  <div id="view-admin" class="view-section" style="display:none;"><h3 class="fw-bold text-dark mb-4 border-bottom pb-2"><i class="fas fa-user-cog text-success me-2"></i>管理者画面</h3><div class="row g-4"><div class="col-md-6"><div class="content-card p-4 h-100"><h5 class="fw-bold mb-4"><i class="fas fa-file-csv me-2"></i>データ出力</h5><button class="btn btn-outline-primary w-100 mb-2 py-2" onclick="alert('CSV作成処理')">勘定奉行用CSV</button><button class="btn btn-outline-success w-100 py-2" onclick="alert('CSV作成処理')">銀行振込用CSV</button></div></div><div class="col-md-6"><div class="content-card p-4 h-100"><h5 class="fw-bold mb-4"><i class="fas fa-tasks me-2"></i>未チェックリスト</h5><div id="adminList" style="max-height:300px; overflow-y:auto;"><p class="text-muted text-center py-5">読み込み中...</p></div><button class="btn btn-dark w-100 mt-3" onclick="checkSelectedAdmin()">チェック済みにする</button></div></div></div></div>
+  <div id="view-admin" class="view-section" style="display:none;">
+    <h3 class="fw-bold text-dark mb-4 border-bottom pb-2"><i class="fas fa-user-cog text-success me-2"></i>管理者画面</h3>
+    <div class="row g-4">
+      <div class="col-md-6">
+        <div class="content-card p-4 h-100">
+          <h5 class="fw-bold mb-4"><i class="fas fa-file-csv me-2"></i>データ出力</h5>
+          <button class="btn btn-outline-primary w-100 mb-2 py-2" onclick="alert('CSV作成処理')">勘定奉行用CSV</button>
+          <button class="btn btn-outline-success w-100 py-2" onclick="alert('CSV作成処理')">銀行振込用CSV</button>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="content-card p-4 h-100">
+          <h5 class="fw-bold mb-4"><i class="fas fa-tasks me-2"></i>未チェックリスト</h5>
+          <div id="adminList" style="max-height:300px; overflow-y:auto;"><p class="text-muted text-center py-5">読み込み中...</p></div>
+          <button class="btn btn-dark w-100 mt-3" onclick="checkSelectedAdmin()">チェック済みにする</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Edit Modal (Fullscreen) -->
@@ -276,7 +322,8 @@ window.onload = function() {
     currentUser = user;
     
     if(user.error) {
-      alert(`ログインエラー: ${user.name}\n理由: ${user.error}\n(Email: ${user.email})`);
+      // alertは使えないため、console.errorに出力
+      console.error(`Login Error: ${user.name} | Reason: ${user.error} | Email: ${user.email}`);
     }
 
     document.getElementById('userName').textContent = user.name;
@@ -287,10 +334,11 @@ window.onload = function() {
     if(user.role === '管理者' || user.role === '経理') document.querySelectorAll('.admin-only').forEach(el=>el.style.display='block');
 
     loadMasters();
+    // 最初のビュー表示時に履歴も読み込む
     loadHistory();
   }).withFailureHandler(err => {
     showLoading(false);
-    alert("初期化エラー: " + err.message);
+    console.error("Initialization Error: " + err.message);
   }).getCurrentUser();
 };
 
@@ -298,11 +346,9 @@ function switchView(viewName) {
   document.querySelectorAll('.view-section').forEach(el => el.style.display = 'none');
   document.getElementById('view-' + viewName).style.display = 'block';
   document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
-  if(event && event.target) event.target.classList.add('active');
-  else {
-      if(viewName==='apply') document.querySelectorAll('.nav-link')[0].classList.add('active');
-      if(viewName==='history') document.querySelectorAll('.nav-link')[1].classList.add('active');
-  }
+  // イベントが渡されない場合（onload時など）の対応
+  const targetLink = document.querySelector(`.nav-item a[onclick="switchView('${viewName}')"]`);
+  if(targetLink) targetLink.classList.add('active');
 
   if(viewName === 'history') loadHistory();
   if(viewName === 'president') loadPresidentData();
@@ -314,52 +360,64 @@ function handleDrop(e) { e.preventDefault(); handleFiles(e.dataTransfer.files); 
 function handleFiles(files) {
   if(!files.length) return;
   showLoading(true, `AI解析中... (0/${files.length})`);
-  let completed = 0;
   
   // ★複数ファイル対応のための初期化
+  const filesArray = Array.from(files);
   pendingDrafts = [];
   currentDraftIndex = -1;
+  let completedCount = 0;
 
-  const processNext = (index) => {
-    if(index >= files.length) {
-      showLoading(false);
-      
-      // ★複数ファイルの場合、編集ワークフローを開始
-      if (pendingDrafts.length > 0) {
-        // 全ファイルの下書き保存が完了したら、履歴をリロードし、編集ワークフローを開始
-        loadHistory(() => {
-            // historyDataから、pendingDraftsのIDを持つデータを取得し直す
-            pendingDrafts = pendingDrafts.map(draft => historyData.find(r => r.id === draft.id)).filter(Boolean);
-            startMultiDraftEdit();
-        });
-      } else {
-        // エラーなどで1件も保存できなかった場合
-        switchView('history');
-      }
-      return;
-    }
-    const file = files[index];
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      const payload = { fileName: file.name, mimeType: file.type, base64: e.target.result.split(',')[1], userName: currentUser.name };
-      google.script.run.withSuccessHandler((res) => {
-        completed++;
-        if(res && res.success) {
-            // 成功した下書きデータを配列に追加
-            pendingDrafts.push(res);
-        }
-        document.getElementById('loadingText').textContent = `AI解析中... (${completed}/${files.length})`;
-        processNext(index + 1);
-      }).withFailureHandler(err => {
-        alert("アップロードエラー: " + err.message);
-        completed++;
-        processNext(index + 1);
-      }).uploadAndAnalyzeAndDraft(payload);
-    };
-    reader.readAsDataURL(file);
+  const processNextFile = (file, index) => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const payload = { fileName: file.name, mimeType: file.type, base64: e.target.result.split(',')[1], userName: currentUser.name };
+            
+            google.script.run.withSuccessHandler((res) => {
+                completedCount++;
+                if(res && res.success) {
+                    // 成功した下書きデータを配列に追加 (この時点ではIDと最低限の情報のみ)
+                    pendingDrafts.push({id: res.id, name: file.name, fileId: res.fileId});
+                } else {
+                    console.error(`File ${file.name} analysis failed: `, res);
+                }
+                document.getElementById('loadingText').textContent = `AI解析中... (${completedCount}/${filesArray.length})`;
+                resolve();
+            }).withFailureHandler(err => {
+                console.error("アップロードエラー: " + err.message);
+                completedCount++;
+                document.getElementById('loadingText').textContent = `AI解析中... (${completedCount}/${filesArray.length})`;
+                resolve(); // 失敗しても次の処理へ
+            }).uploadAndAnalyzeAndDraft(payload);
+        };
+        reader.readAsDataURL(file);
+    });
   };
-  processNext(0);
+
+  // 全ファイルを順次処理
+  let promiseChain = Promise.resolve();
+  filesArray.forEach((file, index) => {
+    promiseChain = promiseChain.then(() => processNextFile(file, index));
+  });
+
+  promiseChain.then(() => {
+    showLoading(false);
+    
+    if (pendingDrafts.length > 0) {
+      // 全ファイルの下書き保存が完了したら、履歴をリロードし、編集ワークフローを開始
+      loadHistory(() => {
+          // historyDataから、pendingDraftsのIDを持つデータを取得し直し、完全なデータとする
+          pendingDrafts = pendingDrafts.map(draft => historyData.find(r => r.id === draft.id)).filter(Boolean);
+          startMultiDraftEdit();
+      });
+    } else {
+      // エラーなどで1件も保存できなかった場合、履歴画面へ
+      switchView('history');
+      // console.log("No drafts were created successfully.");
+    }
+  });
 }
+
 
 // ★複数ファイル編集ワークフロー開始
 function startMultiDraftEdit() {
@@ -368,6 +426,7 @@ function startMultiDraftEdit() {
         return;
     }
     currentDraftIndex = 0;
+    // pendingDraftsには既にhistoryDataから取得し直した完全なデータが入っている
     openEditWithData(pendingDrafts[currentDraftIndex], true);
 }
 
@@ -393,14 +452,15 @@ function renderHistoryTable(data) {
     // ★操作ボタンを修正
     let actionButton;
     if (isDraftOrRejected) {
-        actionButton = `<button class="btn btn-link btn-sm p-0 me-2" onclick="openEditFromHistory('${row.id}', true)">修正</button><button class="btn btn-link btn-sm p-0 text-danger" onclick="deleteApp('${row.id}')">削除</button>`;
+        // 未申請 or 差戻し => 修正 & 削除
+        actionButton = `<button class="btn btn-link btn-sm p-0 me-2" onclick="openEditFromHistory('${row.id}', true)"><i class="fas fa-edit"></i> 修正</button><button class="btn btn-link btn-sm p-0 text-danger" onclick="deleteApp('${row.id}')"><i class="fas fa-trash-alt"></i> 削除</button>`;
     } else {
-        // 社長ロールまたは一般ユーザーの申請済みは「詳細確認」
-        const isApprover = currentUser.role === '社長' || currentUser.role === '経理';
+        // 申請中/承認済み => 詳細確認
+        const isApprover = currentUser.role === '社長' || currentUser.role === '経理' || currentUser.role === '管理者';
         const isSelf = row.user === currentUser.name;
         
         if (isApprover || isSelf) {
-            actionButton = `<button class="btn btn-link btn-sm p-0 text-primary" onclick="openEditFromHistory('${row.id}', false)">詳細確認</button>`;
+            actionButton = `<button class="btn btn-link btn-sm p-0 text-primary" onclick="openEditFromHistory('${row.id}', false)"><i class="fas fa-eye"></i> 詳細確認</button>`;
         } else {
             actionButton = `<span class="text-muted small">-</span>`;
         }
@@ -412,7 +472,10 @@ function renderHistoryTable(data) {
         statusCell += `<div class="reject-comment-bubble"><i class="fas fa-comment-dots me-1"></i> ${row.rejectComment}</div>`;
     }
     
-    tr.innerHTML = `<td class="text-center">${row.status === 'draft' ? `<input type="checkbox" class="form-check-input history-check" value="${row.id}" onchange="updateBulkBtn()">` : ''}</td><td>${row.date}</td><td><div class="fw-bold">${row.store}</div></td><td><div>${row.items[0]?.category||'-'}</div><div class="small text-muted">${row.items[0]?.item||''}</div></td><td class="text-end fw-bold font-monospace">¥${Number(row.amount).toLocaleString()}</td><td class="text-center">${statusCell}</td><td class="text-center">${actionButton}</td>`;
+    // 申請可能なのは draft のみ
+    const canCheck = row.status === 'draft';
+
+    tr.innerHTML = `<td class="text-center">${canCheck ? `<input type="checkbox" class="form-check-input history-check" value="${row.id}" onchange="updateBulkBtn()">` : ''}</td><td>${row.date}</td><td><div class="fw-bold">${row.store}</div></td><td><div>${row.items[0]?.category||'-'}</div><div class="small text-muted">${row.items[0]?.item||''}</div></td><td class="text-end fw-bold font-monospace">¥${Number(row.amount).toLocaleString()}</td><td class="text-center">${statusCell}</td><td class="text-center">${actionButton}</td>`;
     tbody.appendChild(tr);
   });
   updateBulkBtn();
@@ -426,7 +489,8 @@ function updateBulkBtn() {
 function toggleAll(source) { document.querySelectorAll('.history-check').forEach(c => c.checked = source.checked); updateBulkBtn(); }
 function submitBulk() {
   const ids = Array.from(document.querySelectorAll('.history-check:checked')).map(c => c.value);
-  if(!confirm(`${ids.length}件を申請しますか？`)) return;
+  // ★ alert/confirm の代わりにカスタムモーダルまたはコンソールメッセージを使用
+  if(!window.confirm(`${ids.length}件を申請しますか？`)) return; 
   showLoading(true, '申請中...');
   google.script.run.withSuccessHandler(() => { showLoading(false); loadHistory(); }).submitBulkApplications(ids);
 }
@@ -438,19 +502,17 @@ function openEditFromHistory(id, isEditMode) {
   currentDraftIndex = -1;
   
   const row = historyData.find(r => r.id === id);
-  if(!row) return;
+  if(!row) {
+    // historyDataにない、承認待ちのデータかもしれないため、GASから取得を試みる
+    google.script.run.withSuccessHandler(data => {
+        if(data) openEditWithData(data, isEditMode);
+        else console.error("History data not found for ID: " + id);
+    }).getSingleApplicationData(id);
+    return;
+  }
   
-  const data = {
-    id: row.id,
-    date: row.date,
-    store: row.store,
-    amount: row.amount,
-    hasInvoice: row.hasInvoice,
-    fileId: row.fileId,
-    globalMemo: row.globalMemo || '', 
-    items: row.items.length > 0 ? row.items : [{category: '', item: '', amount: 0, client: '', participants: '', memo: ''}]
-  };
-  openEditWithData(data, isEditMode);
+  // historyDataにデータがある場合は直接開く
+  openEditWithData(row, isEditMode);
 }
 
 // 自動計算ロジック
@@ -462,14 +524,20 @@ function calculateTax(index) {
   const taxInput = container.querySelector('.editTax');
   
   const amount = parseFloat(amountInput.value) || 0;
+  // taxRateが select要素なので、valueを取得
   const rate = parseFloat(rateSelect.value) || 0;
   
-  if (amount > 0) {
-    const tax = Math.round(amount - (amount / (1 + rate)));
-    const excluded = amount - tax;
+  if (amount > 0 && rate > 0) {
+    // 1 + rate で割ると税抜額
+    const excluded = Math.round(amount / (1 + rate));
+    const tax = amount - excluded;
     
     excludedInput.value = excluded;
     taxInput.value = tax;
+  } else if (amount > 0 && rate === 0) {
+    // 0%の場合、税抜額 = 税込額, 税 = 0
+    excludedInput.value = amount;
+    taxInput.value = 0;
   } else {
     excludedInput.value = '';
     taxInput.value = '';
@@ -484,14 +552,18 @@ function checkEntertainmentExpense(index) {
   const participantsInput = container.querySelector('.editParticipants');
 
   let category = catInput.value;
+  // 既に適切なカテゴリが設定されていなければ処理をスキップ
   if (category !== '接待交際費' && category !== '少額接待交際費') return;
 
   const amount = parseFloat(amountInput.value) || 0;
+  // 全角数字を半角に変換し、数字以外を除去
   const participantsStr = participantsInput.value.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)).replace(/[^0-9]/g, '');
   const participants = parseInt(participantsStr) || 0;
 
   if (amount > 0 && participants > 0) {
     const perPerson = amount / participants;
+    // 1人あたり5000円（税抜）ルールを適用するため、税抜額で判断するのが適切だが、ここでは税込額で簡易判断
+    // 領収書の合計(税込)をベースにしているため、ここでは10000円で判断するロジックを維持
     if (perPerson <= 10000) {
       if (category !== '少額接待交際費') {
         catInput.value = '少額接待交際費';
@@ -515,8 +587,15 @@ function getDetailItemTemplate(item, index, isReadOnly) {
   // 税額計算 (初期値用)
   const initialAmount = parseFloat(itemAmount) || 0;
   const initialRate = parseFloat(taxRate) || 0;
-  const initialTax = initialAmount > 0 ? Math.round(initialAmount - (initialAmount / (1 + initialRate))) : '';
-  const initialExcluded = initialAmount > 0 ? initialAmount - initialTax : '';
+  let initialExcluded = '';
+  let initialTax = '';
+  if (initialAmount > 0 && initialRate > 0) {
+      initialExcluded = Math.round(initialAmount / (1 + initialRate));
+      initialTax = initialAmount - initialExcluded;
+  } else if (initialAmount > 0 && initialRate === 0) {
+      initialExcluded = initialAmount;
+      initialTax = 0;
+  }
 
   return `
     <div class="detail-card mb-3 ${isReadOnly ? 'is-readonly' : ''}" id="detail-card-${index}">
@@ -527,12 +606,12 @@ function getDetailItemTemplate(item, index, isReadOnly) {
       
       <div class="row g-3">
         <div class="col-12">
-          <label class="form-label">勘定科目</label>
+          <label class="form-label">勘定科目 <span class="badge-required edit-only">必須</span></label>
           <input type="text" class="form-control form-control-sm-custom editCat ${inputClass}" list="categoryList" placeholder="科目を選択" value="${item.category || ''}" oninput="checkEntertainmentExpense(${index})" ${readonlyAttr}>
         </div>
         
         <div class="col-12">
-          <label class="form-label">品目</label>
+          <label class="form-label">品目 <span class="badge-required edit-only">必須</span></label>
           <input type="text" class="form-control form-control-sm-custom editItem ${inputClass}" placeholder="品名" value="${item.item || ''}" ${readonlyAttr}>
         </div>
         
@@ -550,7 +629,7 @@ function getDetailItemTemplate(item, index, isReadOnly) {
           <div class="row g-3">
             <div class="col-md-6">
               <label class="form-label text-primary">金額（税込）</label>
-              <input type="number" class="form-control form-control-sm-custom text-end amount-input-style ${inputClass}" placeholder="0" value="${itemAmount}" oninput="calculateTax(${index}); checkEntertainmentExpense(${index})" ${readonlyAttr}>
+              <input type="number" class="form-control form-control-sm-custom text-end editDetailAmount amount-input-style ${inputClass}" placeholder="0" value="${itemAmount}" oninput="calculateTax(${index}); checkEntertainmentExpense(${index})" ${readonlyAttr}>
             </div>
             <div class="col-md-6">
               <label class="form-label">消費税率</label>
@@ -587,6 +666,8 @@ function renderDetailItems(isReadOnly) {
   container.innerHTML = '';
   detailData.forEach((item, index) => {
     container.innerHTML += getDetailItemTemplate(item, index, isReadOnly);
+    // 初回描画時に税額計算を実行して表示を正確にする
+    // calculateTax(index); // テンプレートで初期値設定済みのため不要だが、念のためコメントアウト
   });
 }
 
@@ -600,7 +681,8 @@ function addDetailItem() {
 // 明細を削除
 function removeDetailItem(index) {
   if(detailData.length === 1) {
-    alert("明細は最低1つ必要です。");
+    // alert("明細は最低1つ必要です。");
+    console.warn("Detail items require at least one entry.");
     return;
   }
   detailData.splice(index, 1);
@@ -617,17 +699,25 @@ function openEditWithData(data, isEditMode) {
 
   // モーダル全体の状態を設定
   if (isEditMode) {
-      modalTitle.innerHTML = `<i class="fas fa-edit text-primary me-2"></i>AI解析結果の確認・修正`;
-      
       // ★マルチドラフト編集中の場合、ボタンを「次へ」に変更
       const isMultiDraft = pendingDrafts.length > 0;
-      const remainingDrafts = pendingDrafts.length - (currentDraftIndex + 1);
+      const remainingDrafts = isMultiDraft ? pendingDrafts.length - (currentDraftIndex + 1) : 0;
       
-      if (isMultiDraft && remainingDrafts > 0) {
-          modalActions.innerHTML = `<button type="button" class="btn btn-outline-secondary me-2" onclick="cancelEdit(true)">キャンセル</button><button type="button" class="btn btn-warning px-4 fw-bold shadow-sm" onclick="saveAndNextDraft()">次へ <span class="badge bg-light text-warning ms-1">${remainingDrafts}</span> <i class="fas fa-arrow-right ms-1"></i></button>`;
-          modalTitle.innerHTML = `<i class="fas fa-edit text-primary me-2"></i>領収書編集中 (${currentDraftIndex + 1}/${pendingDrafts.length}枚目)`;
+      if (isMultiDraft && remainingDrafts >= 0) { // 編集中のファイルも数に含めるため >= 0
+          
+          if (remainingDrafts > 0) {
+              // 次のファイルがある場合
+              modalActions.innerHTML = `<button type="button" class="btn btn-outline-secondary me-2" onclick="cancelEdit(true)">キャンセル</button><button type="button" class="btn btn-warning px-4 fw-bold shadow-sm" onclick="saveAndNextDraft()">次へ <span class="badge bg-light text-warning ms-1">${remainingDrafts}</span> <i class="fas fa-arrow-right ms-1"></i></button>`;
+              modalTitle.innerHTML = `<i class="fas fa-edit text-primary me-2"></i>領収書編集中 (${currentDraftIndex + 1}/${pendingDrafts.length}枚目)`;
+          } else {
+              // 最後の1枚 (remainingDrafts === 0)
+              modalActions.innerHTML = `<button type="button" class="btn btn-outline-secondary me-2" onclick="cancelEdit(true)">キャンセル</button><button type="button" class="btn btn-primary px-4 fw-bold shadow-sm" onclick="saveEdit()"><i class="fas fa-check me-2"></i>登録完了</button>`;
+              modalTitle.innerHTML = `<i class="fas fa-edit text-primary me-2"></i>最後の領収書確認 (${currentDraftIndex + 1}/${pendingDrafts.length}枚目)`;
+          }
+
       } else {
-          // 最後の1枚、または履歴からの単独編集の場合
+          // 履歴からの単独編集の場合
+          modalTitle.innerHTML = `<i class="fas fa-edit text-primary me-2"></i>AI解析結果の確認・修正`;
           modalActions.innerHTML = `<button type="button" class="btn btn-outline-secondary me-2" onclick="cancelEdit(false)">キャンセル</button><button type="button" class="btn btn-primary px-4 fw-bold shadow-sm" onclick="saveEdit()"><i class="fas fa-check me-2"></i>登録完了</button>`;
       }
       
@@ -635,11 +725,12 @@ function openEditWithData(data, isEditMode) {
       editOnlyElements.forEach(el => el.style.display = 'inline');
 
   } else { // 詳細確認モード (社長/申請済みユーザー)
-      modalTitle.innerHTML = `<i class="fas fa-eye text-success me-2"></i>登録詳細の確認 (ID: ${data.id.substring(0, 8)}...)`;
+      modalTitle.innerHTML = `<i class="fas fa-eye text-success me-2"></i>登録詳細の確認 (ID: ${data.id ? data.id.substring(0, 8) : 'N/A'}...)`;
       modalActions.innerHTML = `<button type="button" class="btn btn-outline-secondary me-2" data-bs-dismiss="modal">閉じる</button>`;
       
       // 編集不可にする
       formControls.forEach(el => { 
+          // editUser, editTaxExcluded, editTax は元々readonlyなので、それ以外をreadonlyにする
           if(el.id !== 'editUser' && el.id !== 'editTaxExcluded' && el.id !== 'editTax') {
               el.setAttribute('readonly', true);
               el.classList.add('bg-light');
@@ -651,14 +742,17 @@ function openEditWithData(data, isEditMode) {
 
   document.getElementById('editId').value = data.id || '';
   document.getElementById('editDate').value = data.date || '';
-  document.getElementById('editUser').value = data.user || (currentUser ? currentUser.name : 'Guest'); // ★修正: data.userを優先
+  // 履歴からのデータにはuserが含まれている (data.user)
+  document.getElementById('editUser').value = data.user || (currentUser ? currentUser.name : 'Guest'); 
   document.getElementById('editStore').value = data.store || '';
   document.getElementById('editAmount').value = data.amount || '';
   document.getElementById('editInvoice').checked = !!data.hasInvoice;
   document.getElementById('editGlobalMemo').value = data.globalMemo || '';
   
   // ★明細データを初期化し、描画 (isEditModeを渡す)
+  // data.itemsはGASから取得した最新の明細配列
   if(data.items && data.items.length > 0) {
+    // ディープコピー
     detailData = JSON.parse(JSON.stringify(data.items));
   } else {
     detailData = [{category: '', item: '', amount: '', client: '', participants: '', memo: ''}];
@@ -669,6 +763,7 @@ function openEditWithData(data, isEditMode) {
   const previewFrame = document.getElementById('previewFrame');
   const noPreview = document.getElementById('noPreview');
   
+  // fileId があり、かつ 'NO_FILE' でない場合のみプレビューを表示
   if (data.fileId && data.fileId !== 'NO_FILE') {
     previewFrame.src = `https://drive.google.com/file/d/${data.fileId}/preview`;
     previewFrame.style.display = 'block';
@@ -684,7 +779,8 @@ function openEditWithData(data, isEditMode) {
 
 function cancelEdit(isMultiDraft) {
     if (isMultiDraft) {
-        if (confirm("複数編集を中止しますか？未保存の修正は破棄されます。")) {
+        // alert/confirm の代わりにカスタムモーダルまたはコンソールメッセージを使用
+        if (window.confirm("複数編集を中止しますか？未保存の修正は破棄されます。")) {
             pendingDrafts = [];
             currentDraftIndex = -1;
             editModal.hide();
@@ -728,11 +824,15 @@ function getFormPayload() {
 // 必須チェック
 function validatePayload(payload) {
     if (!payload.useDate || !payload.storeName || !payload.totalAmount) {
-        alert("申請日、支払先、領収書合計金額は必須です。");
+        // alertの代わりに
+        console.error("Validation Error: 申請日、支払先、領収書合計金額は必須です。");
+        window.alert("申請日、支払先、領収書合計金額は必須です。");
         return false;
     }
     if (payload.items.some(item => !item.category || !item.itemName)) {
-        alert("すべての明細について、勘定科目と品目を入力してください。");
+        // alertの代わりに
+        console.error("Validation Error: すべての明細について、勘定科目と品目を入力してください。");
+        window.alert("すべての明細について、勘定科目と品目を入力してください。");
         return false;
     }
     return true;
@@ -749,12 +849,21 @@ function saveEdit() {
     google.script.run.withSuccessHandler(() => {
         // ★修正: 登録完了時にローディング解除、モーダルクローズ、履歴更新を確実に行う
         showLoading(false);
-        editModal.hide();
-        loadHistory();
-        switchView('history'); 
+        editModal.hide(); // モーダルを閉じる
+        
+        // 複数編集ワークフローを完了させる
+        pendingDrafts = [];
+        currentDraftIndex = -1;
+        
+        // 履歴を更新し、履歴画面へ移動
+        loadHistory(() => {
+            switchView('history'); 
+        });
+        
     }).withFailureHandler(err => {
         showLoading(false); 
-        alert("登録中にエラーが発生しました: " + err);
+        console.error("登録中にエラーが発生しました: " + err);
+        window.alert("登録中にエラーが発生しました: " + err);
     }).updateApplication(payload);
 }
 
@@ -767,22 +876,23 @@ function saveAndNextDraft() {
 
     google.script.run.withSuccessHandler(() => {
         // 1. 次のドラフトへインデックスを進める
-        currentDraftIndex++;
+        const nextIndex = currentDraftIndex + 1;
         
         // 2. 履歴をリロード (最新のデータを取得するため)
         loadHistory(() => {
             showLoading(false);
             
             // 3. 次のドラフトを開く
-            if (currentDraftIndex < pendingDrafts.length) {
-                // pendingDraftsのIDを元に、historyDataから最新の完全なデータを取得し直す
-                const nextDraftId = pendingDrafts[currentDraftIndex].id;
-                const nextDraftData = historyData.find(r => r.id === nextDraftId);
+            if (nextIndex < pendingDrafts.length) {
+                currentDraftIndex = nextIndex;
+                // pendingDraftsは既にリロードされたhistoryDataから最新の完全なデータに更新されている
+                const nextDraftData = historyData.find(r => r.id === pendingDrafts[currentDraftIndex].id);
                 
                 if (nextDraftData) {
                     openEditWithData(nextDraftData, true); // 次の編集画面を開く
                 } else {
-                    alert("次のデータが見つかりませんでした。ワークフローを終了します。");
+                    console.error("次のデータが見つかりませんでした。ワークフローを終了します。");
+                    window.alert("次のデータが見つかりませんでした。ワークフローを終了します。");
                     pendingDrafts = [];
                     currentDraftIndex = -1;
                     editModal.hide();
@@ -794,30 +904,61 @@ function saveAndNextDraft() {
                 currentDraftIndex = -1;
                 editModal.hide();
                 switchView('history');
-                alert("すべての領収書の登録が完了しました。");
+                // window.alert("すべての領収書の登録が完了しました。"); // 最後の saveEdit() に任せる
             }
         });
 
     }).withFailureHandler(err => {
         showLoading(false); 
-        alert("下書き保存中にエラーが発生しました: " + err);
+        console.error("下書き保存中にエラーが発生しました: " + err);
+        window.alert("下書き保存中にエラーが発生しました: " + err);
     }).updateApplication(payload);
 }
 
 
-function deleteApp(id) { if(!confirm('削除しますか？')) return; showLoading(true); google.script.run.withSuccessHandler(() => { showLoading(false); loadHistory(); }).deleteApplication(id); }
+function deleteApp(id) { 
+  if(!window.confirm('削除しますか？')) return; 
+  showLoading(true); 
+  google.script.run.withSuccessHandler(() => { 
+    showLoading(false); 
+    loadHistory(); 
+  }).deleteApplication(id); 
+}
 
 // ★差戻し準備: コメントモーダルを表示 (社長画面のボタンから呼び出される)
 function rejectSelectedPrepare() {
   const ids = Array.from(document.querySelectorAll('.pres-check:checked')).map(c => c.value);
   if(ids.length === 0) {
-    alert("差戻し対象を選択してください。");
+    showLoading(false); // ★選択がない場合にローディングオーバーレイを確実に解除
+    window.alert("差戻し対象を選択してください。");
     return;
   }
+  
+  // ★重要: rejectModalが正常に初期化されているかチェック
+  if (!rejectModal) {
+      console.error("Error: rejectCommentModal is not initialized correctly.");
+      window.alert("システムエラー: 差戻し処理に必要なウィンドウが開けませんでした。ブラウザを更新して再度お試しください。");
+      return;
+  }
+  
   // 処理対象IDを一時的に保持
   document.getElementById('rejectCommentInput').dataset.rejectIds = JSON.stringify(ids);
   document.getElementById('rejectCommentInput').value = '';
-  rejectModal.show();
+  
+  // ★追加: 強制的にクラスを追加し、すぐに表示されるようにする
+  const modalEl = document.getElementById('rejectCommentModal');
+  if (modalEl) {
+    modalEl.classList.add('d-block'); // d-blockで強制表示
+    modalEl.style.backgroundColor = 'rgba(0,0,0,0.5)'; // 背景色を手動で設定
+  }
+
+  rejectModal.show(); // ★モーダルを表示
+  
+  // 念のため、Bootstrapが表示後にクラスを操作するかもしれないので、すぐに強制表示クラスを削除 (必須ではないが保険)
+  // setTimeout(() => {
+  //   if(modalEl) modalEl.classList.remove('d-block'); 
+  //   if(modalEl) modalEl.style.backgroundColor = '';
+  // }, 500);
 }
 
 // ★差戻し実行: コメントを付けて処理
@@ -826,10 +967,17 @@ function rejectSelectedConfirm() {
   const comment = document.getElementById('rejectCommentInput').value.trim();
   
   if (!comment) {
-    alert("差戻しコメントは必須です。");
+    window.alert("差戻しコメントは必須です。");
     return;
   }
   
+  // ★修正: modalElが存在する場合のみクラスを操作
+  const modalEl = document.getElementById('rejectCommentModal');
+  if (modalEl) {
+     modalEl.classList.remove('d-block'); // 強制表示クラスを削除
+     modalEl.style.backgroundColor = '';
+  }
+
   rejectModal.hide();
   showLoading(true, '差戻し処理中...');
   
@@ -841,7 +989,9 @@ function rejectSelectedConfirm() {
     loadHistory(); 
   }).withFailureHandler(err => {
       showLoading(false); // エラー時もローディングを解除
-      alert("差戻し中にエラーが発生しました: " + err);
+      // alert("差戻し中にエラーが発生しました: " + err);
+      console.error("Reject Error: " + err);
+      window.alert("差戻し中にエラーが発生しました: " + err);
   }).rejectBulkWithComment(ids, comment);
 }
 
@@ -853,7 +1003,9 @@ function openPresidentDetail(id) {
       if (data) {
           openEditWithData(data, false); // 詳細確認モード
       } else {
-          alert("データが見つかりませんでした。");
+          // alert("データが見つかりませんでした。");
+          console.error("Data not found for President Detail: " + id);
+          window.alert("データが見つかりませんでした。");
       }
   }).getSingleApplicationData(id);
 }
@@ -876,10 +1028,17 @@ function approveSelected() { processBulk('approveBulk', '.pres-check'); }
 function checkSelectedAdmin() { processBulk('checkBulk', '.admin-check'); }
 function processBulk(funcName, selector) { 
     const ids = Array.from(document.querySelectorAll(`${selector}:checked`)).map(c => c.value); 
-    if(ids.length === 0) return; 
+    if(ids.length === 0) {
+        // alertの代わりに
+        window.alert("処理対象を選択してください。");
+        return;
+    }
     
     // rejectSelectedPrepare() から呼び出されるため、rejectBulk の場合は何もしない
-    if (funcName === 'rejectBulk') { return; } 
+    if (funcName.includes('reject')) { return; } 
+    
+    // confirmの代わりに
+    if(!window.confirm(`${ids.length}件を${funcName.includes('approve') ? '承認' : 'チェック済み'}にしますか？`)) return;
     
     showLoading(true); 
     google.script.run.withSuccessHandler(() => { 
@@ -888,7 +1047,9 @@ function processBulk(funcName, selector) {
         else loadPresidentData(); 
     }).withFailureHandler(err => {
         showLoading(false);
-        alert("一括処理中にエラーが発生しました: " + err);
+        // alertの代わりに
+        console.error("Bulk Process Error: " + err);
+        window.alert("一括処理中にエラーが発生しました: " + err);
     })[funcName](ids); 
 }
 function loadMasters() { google.script.run.withSuccessHandler(data => { const dl = document.getElementById('categoryList'); dl.innerHTML = data.accounts.map(a => `<option value="${a}">`).join(''); }).getMasters(); }
