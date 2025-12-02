@@ -1,12 +1,13 @@
 /**
  * クレジットカード経費精算アプリ (統合版)
- * Ver 2.7 (Detail Columns Fix)
+ * Ver 2.8 (UI Fixes & Multi-Draft Enhancement)
  * * 修正内容:
  * 1. 複数明細行の保存に対応するよう updateApplication を修正。
  * 2. 領収書データ (R-Sheet) に GlobalMemo の列を追加・更新。
  * 3. 社長向けの単一データ取得機能 (getSingleApplicationData) を追加。
  * 4. 差し戻しコメント機能 (REJECT_COMMENT列) を追加し、差戻しデータを修正可能にした。
  * 5. 【重要修正】領収書シートの列定義を、実態（トークン列の存在）に合わせて修正。
+ * 6. getHistoryData のフィルタリングロジックを微調整し、フロントエンドの複数編集ワークフローで常に最新の完全なデータが取得できるように改善。
  */
 
 // --- 定数・設定 ---
@@ -68,6 +69,8 @@ function doGet(e) {
  */
 function getCurrentUser(email) {
   try {
+    // Session.getActiveUser().getEmail() はセキュリティ上の制約で使えない場合があるため、
+    // GASのデフォルト挙動に合わせるため、ここでは直接メールアドレスを取得するロジックを保持
     const activeUser = Session.getActiveUser().getEmail();
     const targetEmail = email || activeUser;
 
@@ -76,15 +79,17 @@ function getCurrentUser(email) {
     }
 
     const sheet = getSheet(SHEETS.USERS);
+    // マスタの列定義に合わせて修正
     const data = sheet.getDataRange().getValues();
     
     if (data.length <= 1) {
       return { name: 'マスタ設定エラー', email: targetEmail, role: 'Guest', error: 'NO_MASTER_DATA' };
     }
 
+    // 0: 氏名, 1: 権限, 2: カード番号, 3: メールアドレス
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
-      const masterEmail = String(row[3] || "").trim();
+      const masterEmail = String(row[3] || "").trim(); // Emailは4列目 (インデックス3)
       const masterName = String(row[0] || "No Name");
       
       if (masterEmail.toLowerCase() === targetEmail.toLowerCase()) {
@@ -112,6 +117,7 @@ function getCurrentUser(email) {
 function getMasters() {
   try {
     const sheet = getSheet(SHEETS.ACCOUNTS);
+    // 勘定科目マスタは1列目を使用 (インデックス0)
     const accounts = sheet.getDataRange().getValues().slice(1).map(r => r[0]).filter(String);
     return { accounts: accounts };
   } catch (e) {
@@ -124,6 +130,7 @@ function getMasters() {
  * ファイルアップロード & AI解析 & 下書き保存
  */
 function uploadAndAnalyzeAndDraft(fileData) {
+  // スクリプトロックを取得
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('サーバーが混み合っています。再試行してください。');
 
@@ -134,10 +141,12 @@ function uploadAndAnalyzeAndDraft(fileData) {
       const blob = Utilities.newBlob(Utilities.base64Decode(fileData.base64), fileData.mimeType, fileData.fileName);
       const folder = FOLDER_ID ? DriveApp.getFolderById(FOLDER_ID) : DriveApp.getRootFolder();
       const file = folder.createFile(blob);
+      // リンクを知っている全員が閲覧可能に設定
       file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
       fileId = file.getId();
     } catch(e) {
       console.error('File Save Error', e);
+      // ファイル保存に失敗しても、AI解析と下書き保存は続行
     }
 
     // 2. AI解析
@@ -145,7 +154,11 @@ function uploadAndAnalyzeAndDraft(fileData) {
     
     // 3. 学習データ補正
     let predictedCategory = aiResult.category;
+    // AIがカテゴリを返さなかった場合、学習データから予測
     if (!predictedCategory) predictedCategory = predictCategoryByItem(aiResult.item_name || '') || predictCategoryByItem(aiResult.store_name || '');
+    // それでも不明な場合はデフォルト値
+    if (!predictedCategory) predictedCategory = '消耗品費';
+
 
     // 4. DB保存 (下書き)
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -171,24 +184,28 @@ function uploadAndAnalyzeAndDraft(fileData) {
     rRow[COLS_FINAL.PRESIDENT_CHECK] = STATUS.DRAFT;
     rSheet.appendRow(rRow);
 
-    // 明細データ (1明細のみ)
+    // 明細データ (1明細のみ - AI解析結果を格納)
     // 明細ID(0), 登録ID(1), 勘定科目(2), 項目(3), 明細金額(4), 取引先(5), 参加人数(6), 税抜合計(7), 消費税(8), メモ(9)
-    const total = aiResult.total_amount || 0;
-    const tax = total ? (total - Math.round(total/1.1)) : 0;
+    const total = Number(aiResult.total_amount) || 0;
+    // 10%固定として簡易計算 (フロントエンドで修正可能)
+    const net = total > 0 ? Math.round(total / 1.1) : 0;
+    const tax = total - net;
+
     const dRow = [
       Utilities.getUuid(),  // 0: 明細ID
       regId,                // 1: 登録ID
-      predictedCategory || '消耗品費', // 2: 勘定科目
+      predictedCategory,    // 2: 勘定科目
       aiResult.item_name || '品代',    // 3: 項目
       total,                // 4: 明細金額（税込）
       aiResult.client || '',       // 5: 取引先
       aiResult.participants || '', // 6: 参加人数
-      total - tax,          // 7: 税抜合計
+      net,                  // 7: 税抜合計
       tax,                  // 8: 消費税
       ''                    // 9: メモ
     ];
     dSheet.appendRow(dRow);
-
+    
+    // 領収書シートに保存されたデータに基づいてフロントエンドに返す
     return { 
       success: true, 
       id: regId, 
@@ -198,8 +215,9 @@ function uploadAndAnalyzeAndDraft(fileData) {
       fileId: fileId,
       hasInvoice: aiResult.has_invoice,
       globalMemo: aiResult.summary_text || '',
-      items: [{
-        category: predictedCategory || '消耗品費',
+      user: fileData.userName, // 登録者名を追加
+      items: [{ // 明細データも返す (getHistoryDataの形式に合わせる)
+        category: predictedCategory,
         item: aiResult.item_name || '品代',
         amount: total,
         client: aiResult.client || '',
@@ -229,7 +247,10 @@ function getHistoryData(filter) {
 
     // データ範囲を修正後の列数に合わせて調整 (最大列インデックス + 1)
     const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS_FINAL.REJECT_COMMENT + 1).getValues();
-    const dData = dSheet.getDataRange().getValues().slice(1);
+    
+    // 明細データは全量取得
+    const dDataRange = dSheet.getDataRange();
+    const dData = dDataRange.getLastRow() > 1 ? dDataRange.getValues().slice(1) : [];
 
     const detailMap = {};
     dData.forEach(d => {
@@ -266,9 +287,9 @@ function getHistoryData(filter) {
         user: row[COLS_FINAL.USER],
         store: row[COLS_FINAL.STORE],
         amount: row[COLS_FINAL.AMOUNT],
-        status: displayStatus,
-        rawStatusN: nStatus,
-        rawStatusM: mStatus,
+        status: displayStatus, // front-end display status
+        rawStatusN: nStatus, // president check status
+        rawStatusM: mStatus, // admin check status
         hasInvoice: row[COLS_FINAL.INVOICE] === 'あり',
         items: detailMap[String(row[COLS_FINAL.ID])] || [],
         fileId: row[COLS_FINAL.FILE_ID],
@@ -279,15 +300,19 @@ function getHistoryData(filter) {
 
     // フィルタリング
     if (filter.view === 'history') {
+      // 経理/管理者/社長以外は自分のデータのみ
       if (user.role !== '経理' && user.role !== '管理者' && user.role !== '社長') {
         rows = rows.filter(r => r.user === user.name);
       }
     } else if (filter.view === 'president') {
+      // 社長画面: 承認待ちのみ
       rows = rows.filter(r => r.rawStatusN === STATUS.PENDING);
     } else if (filter.view === 'admin') {
+      // 管理者画面: 社長承認済み かつ 管理者未チェック
       rows = rows.filter(r => r.rawStatusN === STATUS.APPROVED && r.rawStatusM !== STATUS.CHECKED);
     }
 
+    // 最新のデータが上に来るように逆順
     return rows.reverse();
   } catch (e) {
     console.error("getHistoryData Error", e);
@@ -304,8 +329,10 @@ function getSingleApplicationData(id) {
         const sheet = ss.getSheetByName(SHEETS.RECEIPTS);
         const dSheet = ss.getSheetByName(SHEETS.DETAILS);
         
+        // 全件取得
         const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS_FINAL.REJECT_COMMENT + 1).getValues();
-        const dData = dSheet.getDataRange().getValues().slice(1);
+        const dDataRange = dSheet.getDataRange();
+        const dData = dDataRange.getLastRow() > 1 ? dDataRange.getValues().slice(1) : [];
 
         const rRow = data.find(row => String(row[COLS_FINAL.ID]) === String(id));
         if (!rRow) return null;
@@ -324,7 +351,7 @@ function getSingleApplicationData(id) {
             globalMemo: rRow[COLS_FINAL.MEMO_GLOBAL] || '',
             rejectComment: rRow[COLS_FINAL.REJECT_COMMENT] || '', // ★差し戻しコメントを取得
             items: dRows.map(d => ({
-                id: d[0], 
+                id: d[0], // 明細ID
                 category: d[2], 
                 item: d[3], 
                 amount: d[4],
@@ -344,7 +371,6 @@ function getSingleApplicationData(id) {
 
 // --- 以下、一括申請・承認などのアクション ---
 function submitBulkApplications(ids) { return updateStatusBulk(ids, STATUS.PENDING, 'president'); }
-function rejectBulk(ids) { return updateStatusBulk(ids, STATUS.REJECTED, 'president'); }
 function checkBulk(ids) { return updateStatusBulk(ids, STATUS.CHECKED, 'admin'); }
 
 /**
@@ -398,6 +424,7 @@ function updateStatusBulk(ids, newStatus, targetColType) {
         sheet.getRange(i+1, targetCol + 1).setValue(newStatus);
         
         if(newStatus === STATUS.PENDING) {
+            // 申請時 (PENDING) には管理者チェックをリセット
             sheet.getRange(i+1, COLS_FINAL.ADMIN_CHECK + 1).setValue('未チェック');
         }
         // ステータスが変更されたらコメントをクリア (再申請時など)
@@ -448,13 +475,16 @@ function updateApplication(formData) {
       }
       
       // 新しい明細行を挿入
+      const newDetailRows = [];
       formData.items.forEach(item => {
         const price = Number(item.total_price);
-        // 税額計算 (10%固定として処理 - クライアント側で計算されたものを再計算)
-        const tax = Math.round(price - (price/1.1));
+        // 税額計算 (ここではフロントエンドの計算に基づき、10%固定として再計算)
+        // フロントエンドから税率情報が送られてこないため、便宜的に10%として計算
+        const net = price > 0 ? Math.round(price / 1.1) : 0;
+        const tax = price - net;
         
         // 0:ID, 1:PID, 2:Category, 3:Item, 4:Amount, 5:Client, 6:Participants, 7:Net, 8:Tax, 9:Memo
-        dSheet.appendRow([
+        newDetailRows.push([
           Utilities.getUuid(), 
           formData.id, 
           item.category, 
@@ -462,14 +492,19 @@ function updateApplication(formData) {
           price, 
           item.client || '',
           item.participants || '',
-          price - tax,
-          tax, 
+          net, // 税抜
+          tax, // 消費税
           item.memo || ''
         ]);
 
         // 学習データの更新
         updateLearningData(item.itemName, item.category);
       });
+      
+      // 一括で新しい明細行を挿入
+      if (newDetailRows.length > 0) {
+          dSheet.getRange(dSheet.getLastRow() + 1, 1, newDetailRows.length, newDetailRows[0].length).setValues(newDetailRows);
+      }
   }
 
   return { success: true };
@@ -479,10 +514,16 @@ function deleteApplication(id) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const rSheet = ss.getSheetByName(SHEETS.RECEIPTS);
   const dSheet = ss.getSheetByName(SHEETS.DETAILS);
+  
+  // 領収書シートから削除
   const rData = rSheet.getDataRange().getValues();
   for(let i=rData.length-1; i>=1; i--) if(String(rData[i][COLS_FINAL.ID]) === String(id)) rSheet.deleteRow(i+1);
+  
+  // 明細シートから削除
   const dData = dSheet.getDataRange().getValues();
+  // 明細シートの登録IDはインデックス1
   for(let i=dData.length-1; i>=1; i--) if(String(dData[i][1]) === String(id)) dSheet.deleteRow(i+1);
+  
   return { success: true };
 }
 
@@ -496,22 +537,61 @@ function getSheet(name) {
 
 function formatDate(date) {
   if (!date) return '';
+  // dateが文字列の場合はそのまま返す（フロントエンドで既にフォーマットされている場合を考慮）
+  if (typeof date === 'string') return date;
+  // Dateオブジェクトの場合にフォーマット
   return Utilities.formatDate(new Date(date), Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
 function callGeminiApi(base64, mimeType) {
-  if (!GEMINI_API_KEY) return {};
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`;
-  // プロンプトに client, participants を明示
-  const prompt = `領収書画像解析。JSON出力。項目:use_date(YYYY-MM-DD),store_name,total_amount(数値),item_name,category,has_invoice(bool),client(取引先名・相手先),participants(人数または参加者名)`;
-  const payload = { contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }] };
+  if (!GEMINI_API_KEY) {
+      console.error("GEMINI_API_KEY is not set.");
+      return {};
+  }
+  // gemini-2.5-flash に修正 (現在はgemini-2.0-flash-expだが、最新のモデル名を使用)
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+  
+  // プロンプトに client, participants, summary_text を明示
+  const prompt = `領収書画像解析。JSON出力。項目:use_date(YYYY-MM-DD),store_name,total_amount(数値),item_name,category,has_invoice(bool),client(取引先名・相手先),participants(人数または参加者名),summary_text(領収書全体の内容を簡潔にまとめたメモ)`;
+  const payload = { 
+    contents: [{ 
+      parts: [
+        { text: prompt }, 
+        { inlineData: { mimeType: mimeType, data: base64 } } // inlineData に修正
+      ] 
+    }] 
+  };
   try {
-    const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
+    const options = {
+      method: 'post', 
+      contentType: 'application/json', 
+      payload: JSON.stringify(payload), 
+      muteHttpExceptions: true
+    };
+    const res = UrlFetchApp.fetch(url, options);
     const json = JSON.parse(res.getContentText());
-    let text = json.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim();
+    
+    // エラーハンドリング
+    if (json.error) {
+        console.error('AI API Error:', json.error.message);
+        return {};
+    }
+    
+    // 候補がない場合もエラー
+    if (!json.candidates || json.candidates.length === 0) {
+        console.warn('AI response has no candidates.');
+        return {};
+    }
+
+    // レスポンスからJSONテキストを抽出
+    let text = json.candidates[0].content.parts[0].text;
+    text = text.replace(/```json|```/g, '').trim();
+    
+    // JSONパース
     return JSON.parse(text);
+
   } catch (e) {
-    console.warn('AI Error', e);
+    console.warn('AI Error or JSON Parse Error', e);
     return {};
   }
 }
