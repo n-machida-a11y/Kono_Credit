@@ -85,6 +85,14 @@
         max-width: 100%;
         margin-top: 5px;
     }
+    
+    /* ★修正: モーダルのz-index問題を解決するための強制スタイル */
+    /* loadingOverlay(9999)よりも確実に上に表示させる */
+    .modal { z-index: 10050 !important; }
+    /* バックドロップ(黒い背景)はモーダルより下にする */
+    .modal-backdrop { z-index: 10040 !important; }
+    /* モーダルダイアログ自体も確実に手前に */
+    .modal-dialog { z-index: 10060 !important; }
   </style>
 </head>
 <body>
@@ -282,8 +290,8 @@
     </div>
   </div>
 
-<!-- Reject Comment Modal -->
-<div class="modal fade" id="rejectCommentModal" tabindex="-1">
+<!-- ★修正: Reject Comment Modal から "fade" クラスを削除して確実に表示させる -->
+<div class="modal" id="rejectCommentModal" tabindex="-1" aria-modal="true" role="dialog">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
@@ -308,14 +316,28 @@
 let currentUser = null;
 let historyData = [];
 let detailData = []; // ★明細データを保持する配列
-const editModal = new bootstrap.Modal(document.getElementById('editModal'));
-const rejectModal = new bootstrap.Modal(document.getElementById('rejectCommentModal'));
+
+// モーダル変数の定義（初期化はonloadで行う）
+let editModal = null;
+let rejectModal = null;
 
 // ★複数ファイルアップロード用のグローバル変数
 let pendingDrafts = [];
 let currentDraftIndex = -1;
 
 window.onload = function() {
+  // モーダルの初期化
+  editModal = new bootstrap.Modal(document.getElementById('editModal'));
+  
+  // rejectModalの初期化: 念のためオプションを指定
+  const rejectEl = document.getElementById('rejectCommentModal');
+  if(rejectEl) {
+      rejectModal = new bootstrap.Modal(rejectEl, {
+          backdrop: 'static', // 背景クリックで閉じない
+          keyboard: false
+      });
+  }
+
   showLoading(true, 'ユーザー情報取得中...');
   google.script.run.withSuccessHandler(user => {
     showLoading(false);
@@ -936,29 +958,38 @@ function rejectSelectedPrepare() {
   
   // ★重要: rejectModalが正常に初期化されているかチェック
   if (!rejectModal) {
-      console.error("Error: rejectCommentModal is not initialized correctly.");
-      window.alert("システムエラー: 差戻し処理に必要なウィンドウが開けませんでした。ブラウザを更新して再度お試しください。");
-      return;
+      // 初期化されていなければ再取得を試みる (安全策)
+      rejectModal = new bootstrap.Modal(document.getElementById('rejectCommentModal'));
+      if(!rejectModal) {
+         console.error("Error: rejectCommentModal is not initialized correctly.");
+         window.alert("システムエラー: 差戻し処理に必要なウィンドウが開けませんでした。ブラウザを更新して再度お試しください。");
+         return;
+      }
   }
   
   // 処理対象IDを一時的に保持
   document.getElementById('rejectCommentInput').dataset.rejectIds = JSON.stringify(ids);
   document.getElementById('rejectCommentInput').value = '';
   
-  // ★追加: 強制的にクラスを追加し、すぐに表示されるようにする
-  const modalEl = document.getElementById('rejectCommentModal');
-  if (modalEl) {
-    modalEl.classList.add('d-block'); // d-blockで強制表示
-    modalEl.style.backgroundColor = 'rgba(0,0,0,0.5)'; // 背景色を手動で設定
-  }
-
-  rejectModal.show(); // ★モーダルを表示
+  // ★修正: JSによる強制表示（Bootstrapのshowメソッドが失敗する場合の対策）
+  // まずBootstrapのshowを呼ぶ
+  rejectModal.show();
   
-  // 念のため、Bootstrapが表示後にクラスを操作するかもしれないので、すぐに強制表示クラスを削除 (必須ではないが保険)
-  // setTimeout(() => {
-  //   if(modalEl) modalEl.classList.remove('d-block'); 
-  //   if(modalEl) modalEl.style.backgroundColor = '';
-  // }, 500);
+  // 念のため少し遅れて強制的にdisplay:blockにする
+  setTimeout(() => {
+      const el = document.getElementById('rejectCommentModal');
+      if(el && getComputedStyle(el).display === 'none') {
+          console.warn('Forcing modal display');
+          el.style.display = 'block';
+          el.classList.add('show');
+          // バックドロップがない場合は追加する（簡易的）
+          if(!document.querySelector('.modal-backdrop')) {
+              const bd = document.createElement('div');
+              bd.className = 'modal-backdrop show';
+              document.body.appendChild(bd);
+          }
+      }
+  }, 100);
 }
 
 // ★差戻し実行: コメントを付けて処理
@@ -971,14 +1002,17 @@ function rejectSelectedConfirm() {
     return;
   }
   
-  // ★修正: modalElが存在する場合のみクラスを操作
-  const modalEl = document.getElementById('rejectCommentModal');
-  if (modalEl) {
-     modalEl.classList.remove('d-block'); // 強制表示クラスを削除
-     modalEl.style.backgroundColor = '';
-  }
-
+  // ★修正：無理なスタイル操作を削除し、Bootstrap標準のhideメソッドのみを使用
   rejectModal.hide();
+  // 強制表示させた場合の掃除
+  const el = document.getElementById('rejectCommentModal');
+  if(el) {
+      el.style.display = ''; 
+      el.classList.remove('show');
+  }
+  const bd = document.querySelector('.modal-backdrop');
+  if(bd) bd.remove();
+
   showLoading(true, '差戻し処理中...');
   
   // GAS側にIDsとコメントを渡す関数を呼び出す
