@@ -1,11 +1,9 @@
 /**
  * クレジットカード経費精算アプリ (統合版)
- * Ver 3.0 (Reconciliation & Card Name Automation)
+ * Ver 4.3 (Preview Reliability Fix)
  * * 修正内容:
- * 1. 領収書データに「カード名称」列を追加 (COLS_FINAL.CARD_NAME)。
- * 2. 申請時・更新時にユーザーマスタからカード名称を自動保存するよう修正。
- * 3. クレジットカード明細PDFのアップロード・解析機能を追加。
- * 4. 領収書データとカード明細データの照合機能 (日次合計比較) を追加。
+ * 1. プレビュー表示を確実にするため、GAS側でファイルデータをBase64エンコードしてフロントに渡すよう変更。
+ * 2. 既存のCSV出力・重複チェック・管理者ロジックを完全維持。
  */
 
 // --- 定数・設定 ---
@@ -16,20 +14,18 @@ const SHEETS = {
   USERS: '使用者マスタ',
   LEARNING: '学習データ',
   CONFIG: '設定',
-  CARD_STATEMENT: 'カード明細' // ★追加
+  CARD_STATEMENT: 'カード明細'
 };
 
-// ステータス定義
 const STATUS = {
   DRAFT: '未申請',
   PENDING: '承認待ち',
   APPROVED: '承認',
   REJECTED: '差戻し',
-  CHECKED: 'チェック済み'
+  CHECKED: '確認済み',
+  EXPORTED: 'CSV出力済み'
 };
 
-// 領収書シートの列定義
-// ★15:カード名称 を追加 (列番号は0始まり)
 const COLS_FINAL = {
   ID: 0, 
   DATE: 1, 
@@ -40,34 +36,19 @@ const COLS_FINAL = {
   MEMO_GLOBAL: 6,
   FILE_NAME: 7, 
   FILE_ID: 8, 
-  // 9, 10 はトークン列
   INVOICE: 11,
   ADMIN_CHECK: 12,
   PRESIDENT_CHECK: 13,
   REJECT_COMMENT: 14,
-  CARD_NAME: 15 // ★追加: カード名称
-};
-
-// カード明細シートの列定義
-const COLS_CARD = {
-  ID: 0,
-  DATE: 1,        // 利用年月日
-  CARD_NAME: 2,   // カード名称 (照合キー)
-  STORE: 3,       // ご利用店名
-  AMOUNT: 4,      // ご利用金額
-  STATUS: 5,      // 照合結果ステータス
-  UPLOAD_DATE: 6  // 取込日時
+  CARD_NAME: 15
 };
 
 const PROPS = PropertiesService.getScriptProperties();
 const GEMINI_API_KEY = PROPS.getProperty('GEMINI_API_KEY');
 const FOLDER_ID = PROPS.getProperty('RECEIPT_FOLDER_ID');
 
-/**
- * HTMLを表示
- */
 function doGet(e) {
-  return HtmlService.createTemplateFromFile('index')
+  return HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle('クレジット精算アプリ')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -78,67 +59,92 @@ function doGet(e) {
  */
 function getCurrentUser(email) {
   try {
-    const activeUser = Session.getActiveUser().getEmail();
-    const targetEmail = email || activeUser;
+    let activeEmail = Session.getActiveUser().getEmail();
+    if (!activeEmail) {
+      activeEmail = Session.getEffectiveUser().getEmail();
+    }
+    
+    const targetEmail = (email || activeEmail || "").trim().toLowerCase();
+    const guestUser = { name: 'ゲスト', email: targetEmail || 'unknown', role: '一般', card: '', dept: '', canFix: false };
 
-    if (!targetEmail) return { name: 'ゲスト', email: 'unknown', role: 'Guest', error: 'EMAIL_EMPTY' };
-
+    if (!targetEmail) return guestUser;
+    
     const sheet = getSheet(SHEETS.USERS);
     const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return guestUser;
     
-    if (data.length <= 1) return { name: 'マスタ設定エラー', email: targetEmail, role: 'Guest', error: 'NO_MASTER_DATA' };
-
-    // 0: 氏名, 1: 権限, 2: カード番号/名称, 3: メールアドレス
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
-      const masterEmail = String(row[3] || "").trim();
-      
-      if (masterEmail.toLowerCase() === targetEmail.toLowerCase()) {
-        return {
-          name: String(row[0] || "No Name"),
-          email: masterEmail,
-          role: String(row[1] || "一般"),
-          card: String(row[2] || ""), // ★これをカード名称として使用
-          canFix: true
+      const masterEmail = String(row[3] || "").trim().toLowerCase();
+      if (masterEmail === targetEmail) {
+        return { 
+          name: String(row[0] || "No Name"), 
+          email: targetEmail, 
+          role: String(row[1] || "一般"), 
+          card: String(row[2] || ""), 
+          dept: String(row[4] || ""), 
+          canFix: true 
         };
       }
     }
-    return { name: '未登録ユーザー', email: targetEmail, role: 'Guest', canFix: false, error: 'NOT_REGISTERED' };
-
+    return guestUser;
   } catch (e) {
-    console.error(`[Auth] Error: ${e.message}`);
     return { name: 'システムエラー', email: 'error', role: 'Error', error: e.message };
   }
 }
 
-/**
- * マスタデータ取得
- */
 function getMasters() {
   try {
     const sheet = getSheet(SHEETS.ACCOUNTS);
-    const accounts = sheet.getDataRange().getValues().slice(1).map(r => r[0]).filter(String);
+    const data = sheet.getDataRange().getValues();
+    const accounts = data.slice(1).map(r => String(r[1] || '').trim()).filter(Boolean);
     return { accounts: accounts };
   } catch (e) {
     return { accounts: [] };
   }
 }
 
-/**
- * ファイルアップロード & AI解析 & 下書き保存
- */
+// --- 学習機能 ---
+function updateLearningData(key, value, type = 'CATEGORY') {
+  if(!key || !value) return;
+  const sheet = getSheet(SHEETS.LEARNING);
+  sheet.appendRow([key, value, new Date(), type]);
+}
+
+function findLearnedData(keyword, type = 'CATEGORY') {
+  const sheet = getSheet(SHEETS.LEARNING);
+  if (sheet.getLastRow() < 2) return null;
+  const data = sheet.getDataRange().getValues();
+  for(let i=data.length-1; i>=1; i--) {
+    const rowKey = String(data[i][0]);
+    const rowValue = String(data[i][1]);
+    const rowType = String(data[i][3] || 'CATEGORY');
+    if (rowType === type) {
+      if (type === 'STORE' && (keyword === rowKey || keyword.startsWith(rowKey))) return rowValue;
+      if (type === 'CATEGORY' && keyword.includes(rowKey)) return rowValue;
+    }
+  }
+  return null;
+}
+
+function findCategoryInMaster(keyword) {
+  if (!keyword) return null;
+  const sheet = getSheet(SHEETS.ACCOUNTS);
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    const account = String(data[i][1] || '').trim();
+    if (account && keyword.includes(account)) return account;
+  }
+  return null;
+}
+
+// --- メイン処理 ---
 function uploadAndAnalyzeAndDraft(fileData) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) throw new Error('サーバーが混み合っています。再試行してください。');
-
+  if (!lock.tryLock(30000)) throw new Error('サーバーが混み合っています。');
   try {
-    // ユーザー情報の取得 (カード名称のため)
-    // fileData.userName はクライアントから来るが、確実なカード情報はサーバー側でEmailから引くのが安全だが、
-    // ここでは簡易的に getCurrentUser を呼ぶ（実行ユーザーのコンテキスト）
     const currentUser = getCurrentUser(); 
-    const cardName = currentUser.card || ''; // ★マスタからカード名称を取得
-
-    // 1. ファイル保存
+    const cardName = currentUser.card || '';
     let fileId = 'NO_FILE';
     try {
       const blob = Utilities.newBlob(Utilities.base64Decode(fileData.base64), fileData.mimeType, fileData.fileName);
@@ -146,493 +152,132 @@ function uploadAndAnalyzeAndDraft(fileData) {
       const file = folder.createFile(blob);
       file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
       fileId = file.getId();
-    } catch(e) {
-      console.error('File Save Error', e);
-    }
-
-    // 2. AI解析
+    } catch(e) { console.error('File Save Error', e); }
+    
     const aiResult = callGeminiApi(fileData.base64, fileData.mimeType);
+    let finalStoreName = aiResult.store_name || '';
+    const learnedStoreName = findLearnedData(finalStoreName, 'STORE');
+    if (learnedStoreName) finalStoreName = learnedStoreName;
     
-    // 3. カテゴリ予測
     let predictedCategory = aiResult.category;
-    if (!predictedCategory) predictedCategory = predictCategoryByItem(aiResult.item_name || '') || predictCategoryByItem(aiResult.store_name || '');
+    if (!predictedCategory) predictedCategory = findLearnedData(aiResult.item_name || '', 'CATEGORY') || findLearnedData(finalStoreName, 'CATEGORY') || findCategoryInMaster(aiResult.item_name || '') || findCategoryInMaster(finalStoreName);
     if (!predictedCategory) predictedCategory = '消耗品費';
-
-
-    // 4. DB保存 (下書き)
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const rSheet = getSheet(SHEETS.RECEIPTS); // getSheetヘルパーを使用
-    const dSheet = getSheet(SHEETS.DETAILS);
-    const regId = Utilities.getUuid();
-    const now = new Date();
     
-    // 親データ
-    // 配列のサイズを拡張 (CARD_NAMEまで)
+    const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
+    const regId = Utilities.getUuid(), now = new Date();
     const rRow = new Array(COLS_FINAL.CARD_NAME + 1).fill(''); 
     rRow[COLS_FINAL.ID] = regId;
     rRow[COLS_FINAL.DATE] = now;
     rRow[COLS_FINAL.USE_DATE] = aiResult.use_date || now;
     rRow[COLS_FINAL.USER] = fileData.userName;
-    rRow[COLS_FINAL.STORE] = aiResult.store_name || '';
+    rRow[COLS_FINAL.STORE] = finalStoreName;
     rRow[COLS_FINAL.AMOUNT] = aiResult.total_amount || 0;
     rRow[COLS_FINAL.MEMO_GLOBAL] = aiResult.summary_text || '';
     rRow[COLS_FINAL.FILE_NAME] = fileData.fileName;
     rRow[COLS_FINAL.FILE_ID] = fileId;
     rRow[COLS_FINAL.INVOICE] = aiResult.has_invoice ? 'あり' : 'なし';
-    rRow[COLS_FINAL.ADMIN_CHECK] = STATUS.DRAFT; 
+    rRow[COLS_FINAL.ADMIN_CHECK] = '未チェック'; 
     rRow[COLS_FINAL.PRESIDENT_CHECK] = STATUS.DRAFT;
-    rRow[COLS_FINAL.CARD_NAME] = cardName; // ★カード名称を保存
-    
+    rRow[COLS_FINAL.CARD_NAME] = cardName;
     rSheet.appendRow(rRow);
-
-    // 明細データ
-    const total = Number(aiResult.total_amount) || 0;
-    const net = total > 0 ? Math.round(total / 1.1) : 0;
-    const tax = total - net;
-
-    const dRow = [
-      Utilities.getUuid(),
-      regId,
-      predictedCategory,
-      aiResult.item_name || '品代',
-      total,
-      aiResult.client || '',
-      aiResult.participants || '',
-      net,
-      tax,
-      ''
-    ];
-    dSheet.appendRow(dRow);
     
-    return { 
-      success: true, 
-      id: regId, 
-      fileId: fileId,
-      // ユーザーへのフィードバック用
-      store: aiResult.store_name,
-      amount: total,
-      cardName: cardName // フロントエンド確認用
-    };
-
-  } catch(e) {
-    throw new Error('処理エラー: ' + e.message);
-  } finally {
-    lock.releaseLock();
-  }
+    const total = Number(aiResult.total_amount) || 0;
+    const net = Math.round(total / 1.1), tax = total - net;
+    dSheet.appendRow([Utilities.getUuid(), regId, predictedCategory, aiResult.item_name || '品代', total, aiResult.client || '', aiResult.participants || '', net, tax, '']);
+    
+    return { success: true, id: regId, fileId: fileId, store: finalStoreName, amount: total, cardName: cardName };
+  } catch(e) { throw new Error(e.message); } finally { lock.releaseLock(); }
 }
 
-/**
- * 経費申請データを更新
- */
 function updateApplication(formData) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const rSheet = getSheet(SHEETS.RECEIPTS);
-  const dSheet = getSheet(SHEETS.DETAILS);
+  const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
   const data = rSheet.getDataRange().getValues();
-  
   let rowIndex = -1;
-  // ヘッダー行以降を検索
-  for(let i=1; i<data.length; i++) {
-    if(String(data[i][COLS_FINAL.ID]) === String(formData.id)) { rowIndex = i + 1; break; }
-  }
-  if(rowIndex === -1) throw new Error('データが見つかりません');
-
-  // 現在の行データを取得（既存の値を保持するため）
+  for(let i=1; i<data.length; i++) if(String(data[i][COLS_FINAL.ID]) === String(formData.id)) { rowIndex = i + 1; break; }
+  if(rowIndex === -1) throw new Error('データなし');
+  
   const currentRow = data[rowIndex - 1];
-  // カード名称が既に保存されているかチェック、なければ現在のユーザー情報から補完
-  let currentCardName = currentRow[COLS_FINAL.CARD_NAME];
-  if (!currentCardName) {
-      const user = getCurrentUser(); // 編集者が本人であることを前提
-      currentCardName = user.card || '';
-  }
-
-  // 1. 親データ更新
+  const currentStore = String(currentRow[COLS_FINAL.STORE] || ''), newStore = String(formData.storeName || ''); 
+  if (currentStore && newStore && currentStore !== newStore) updateLearningData(currentStore, newStore, 'STORE');
+  
   rSheet.getRange(rowIndex, COLS_FINAL.USE_DATE + 1).setValue(formData.useDate);
   rSheet.getRange(rowIndex, COLS_FINAL.STORE + 1).setValue(formData.storeName);
   rSheet.getRange(rowIndex, COLS_FINAL.AMOUNT + 1).setValue(Number(formData.totalAmount));
   rSheet.getRange(rowIndex, COLS_FINAL.INVOICE + 1).setValue(formData.hasInvoice ? 'あり':'なし');
   rSheet.getRange(rowIndex, COLS_FINAL.MEMO_GLOBAL + 1).setValue(formData.globalMemo || '');
-  rSheet.getRange(rowIndex, COLS_FINAL.CARD_NAME + 1).setValue(currentCardName); // ★カード名称を保存/維持
   
-  // ステータスリセット
-  rSheet.getRange(rowIndex, COLS_FINAL.PRESIDENT_CHECK + 1).setValue(STATUS.DRAFT);
-  rSheet.getRange(rowIndex, COLS_FINAL.ADMIN_CHECK + 1).setValue(STATUS.DRAFT);
-  rSheet.getRange(rowIndex, COLS_FINAL.REJECT_COMMENT + 1).setValue(''); 
-
-  // 2. 明細更新 (全削除して挿入)
-  if(formData.items && formData.items.length > 0) {
+  if(formData.items) {
       const dData = dSheet.getDataRange().getValues();
-      for(let i=dData.length-1; i>=1; i--) {
-        if(String(dData[i][1]) === String(formData.id)) dSheet.deleteRow(i+1);
-      }
-      
-      const newDetailRows = [];
-      formData.items.forEach(item => {
-        const price = Number(item.total_price);
-        const net = price > 0 ? Math.round(price / 1.1) : 0;
-        const tax = price - net;
-        
-        newDetailRows.push([
-          Utilities.getUuid(), 
-          formData.id, 
-          item.category, 
-          item.itemName, 
-          price, 
-          item.client || '',
-          item.participants || '',
-          net, 
-          tax, 
-          item.memo || ''
-        ]);
-        updateLearningData(item.itemName, item.category);
+      for(let i=dData.length-1; i>=1; i--) if(String(dData[i][1]) === String(formData.id)) dSheet.deleteRow(i+1);
+      const newRows = formData.items.map(it => {
+        updateLearningData(it.itemName, it.category, 'CATEGORY');
+        const price = Number(it.total_price), net = Math.round(price / 1.1), tax = price - net;
+        return [Utilities.getUuid(), formData.id, it.category, it.itemName, price, it.client || '', it.participants || '', net, tax, it.memo || ''];
       });
-      
-      if (newDetailRows.length > 0) {
-          dSheet.getRange(dSheet.getLastRow() + 1, 1, newDetailRows.length, newDetailRows[0].length).setValues(newDetailRows);
-      }
+      if (newRows.length > 0) dSheet.getRange(dSheet.getLastRow() + 1, 1, newRows.length, newRows[0].length).setValues(newRows);
   }
-
   return { success: true };
 }
 
-// --- カード明細照合関連機能 ---
-
-/**
- * クレジットカード明細PDFをアップロード・解析して保存
- */
-function uploadAndAnalyzeCardStatement(fileData) {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(45000)) throw new Error('サーバーが混み合っています。');
-
-  try {
-    // 1. Gemini APIで明細解析
-    const extractedData = callGeminiForStatement(fileData.base64, fileData.mimeType);
-    if (!extractedData || !extractedData.items || extractedData.items.length === 0) {
-        throw new Error('明細データの抽出に失敗しました。');
-    }
-
-    // 2. カード明細シートに保存
-    const sheet = getSheet(SHEETS.CARD_STATEMENT);
-    // 既存データのクリアは行わず、追加する方針 (運用で手動クリアしてもらう想定)
-    // ただし、同じID(UUID生成)を持つ行は重複しない
-    
-    const now = new Date();
-    const rows = extractedData.items.map(item => {
-       return [
-         Utilities.getUuid(),
-         item.date,
-         item.card_name || '不明なカード', // AIが抽出したカード名
-         item.store,
-         item.amount,
-         '未照合', // 初期ステータス
-         now
-       ];
-    });
-
-    if (rows.length > 0) {
-        // ヘッダー行がない場合は追加
-        if (sheet.getLastRow() === 0) {
-            sheet.appendRow(['ID', '利用年月日', 'カード名称', 'ご利用店名', 'ご利用金額', '照合結果', '取込日時']);
-        }
-        sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
-    }
-
-    return { success: true, count: rows.length, message: `${rows.length}件の明細を取り込みました。` };
-
-  } catch (e) {
-    console.error(e);
-    throw new Error('明細解析エラー: ' + e.message);
-  } finally {
-    lock.releaseLock();
+function getDataForCSV(ids) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet(), rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
+  
+  const aSheet = getSheet(SHEETS.ACCOUNTS);
+  const aData = aSheet.getDataRange().getValues(), accountCodeMap = {};
+  for(let i=1; i<aData.length; i++) {
+    const code = String(aData[i][0] || '').trim();
+    const name = String(aData[i][1] || '').trim();
+    if(name) accountCodeMap[name] = code;
   }
-}
 
-/**
- * Gemini APIで明細書解析 (PDF対応)
- * 2ページ目までを対象とし、カード名、日付、店名、金額を抽出
- */
-function callGeminiForStatement(base64, mimeType) {
-  if (!GEMINI_API_KEY) throw new Error("API Key not set");
-  
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-  
-  // プロンプト: 2ページ目までの制限と、カード名称の補完を指示
-  const prompt = `
-    クレジットカードの利用明細書(PDF)です。以下の指示に従ってデータを抽出してください。
-    1. 1ページ目と2ページ目の明細行のみを対象としてください。3ページ目以降は無視してください。
-    2. 文書全体またはヘッダーから「カード名称」(例: JALダイナースカード BA) を特定し、全ての明細行の card_name に適用してください。
-    3. 各明細行について、以下のJSON形式で出力してください。
-       - date: 利用年月日 (YYYY-MM-DD形式)
-       - card_name: カード名称
-       - store: ご利用店名
-       - amount: ご利用金額 (円, 数値のみ)
-    4. 出力は { "items": [...] } の形式にしてください。
-  `;
+  const uSheet = getSheet(SHEETS.USERS);
+  const uData = uSheet.getDataRange().getValues(), userDeptMap = {};
+  for(let i=1; i<uData.length; i++) {
+    const uName = String(uData[i][0] || '').trim();
+    const uDept = String(uData[i][4] || '').trim(); 
+    if(uName) userDeptMap[uName] = uDept;
+  }
 
-  const payload = { 
-    contents: [{ 
-      parts: [
-        { text: prompt }, 
-        { inlineData: { mimeType: mimeType, data: base64 } }
-      ] 
-    }] 
-  };
-
-  const options = {
-      method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true
-  };
-  
-  const res = UrlFetchApp.fetch(url, options);
-  const json = JSON.parse(res.getContentText());
-  
-  if (json.error) throw new Error(json.error.message);
-  
-  let text = json.candidates[0].content.parts[0].text;
-  text = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(text);
-}
-
-/**
- * 照合実行 (Reconciliation)
- * カード明細シートの各行について、領収書シートとの突き合わせを行う
- */
-function runReconciliation() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const cSheet = getSheet(SHEETS.CARD_STATEMENT);
-  const rSheet = getSheet(SHEETS.RECEIPTS);
-
-  // 1. カード明細データ取得
-  if (cSheet.getLastRow() <= 1) return { success: true, message: 'カード明細データがありません。' };
-  const cDataRange = cSheet.getRange(2, 1, cSheet.getLastRow() - 1, 7); // 列数注意
-  const cData = cDataRange.getValues();
-
-  // 2. 領収書データ取得 (カード名称と日付で集計用)
-  if (rSheet.getLastRow() <= 1) return { success: true, message: '照合対象の領収書データがありません。' };
-  // 列定義に合わせて範囲取得 (CARD_NAMEまで)
   const rData = rSheet.getRange(2, 1, rSheet.getLastRow() - 1, COLS_FINAL.CARD_NAME + 1).getValues();
-
-  // 3. 領収書データの集計マップ作成
-  // Key: "YYYY-MM-DD_CardName", Value: TotalAmount
-  const receiptMap = {};
-  
-  rData.forEach(row => {
-      const dateStr = formatDate(row[COLS_FINAL.USE_DATE]);
-      const cardName = String(row[COLS_FINAL.CARD_NAME] || '').trim();
-      const amount = Number(row[COLS_FINAL.AMOUNT]) || 0;
-      
-      // 削除済みデータ等は除外すべきだが、物理削除されている前提
-      // 承認ステータスに関わらず、申請されているものはすべて対象とする
-      
-      if (dateStr && cardName) {
-          const key = `${dateStr}_${cardName}`;
-          if (!receiptMap[key]) receiptMap[key] = 0;
-          receiptMap[key] += amount;
-      }
+  const dData = dSheet.getDataRange().getLastRow() > 1 ? dSheet.getDataRange().getValues().slice(1) : [];
+  const detailMap = {};
+  dData.forEach(d => {
+    const pid = String(d[1]);
+    if(!detailMap[pid]) detailMap[pid] = [];
+    detailMap[pid].push({ category: d[2], item: d[3], amount: d[4] });
   });
 
-  // 4. カード明細データも日次で集計する (明細行ごとの照合ではなく、日次合計の一致を見るため)
-  // ただし、結果出力は「明細行ごと」に行う必要があるため、明細行 -> 日次キー -> 判定 という流れにする。
-  // まず、カード明細側の日次合計を計算しておく必要がある。
-  const statementMap = {};
-  cData.forEach(row => {
-      const dateStr = formatDate(row[COLS_CARD.DATE]);
-      const cardName = String(row[COLS_CARD.CARD_NAME] || '').trim();
-      const amount = Number(row[COLS_CARD.AMOUNT]) || 0;
-      
-      if (dateStr && cardName) {
-          const key = `${dateStr}_${cardName}`;
-          if (!statementMap[key]) statementMap[key] = 0;
-          statementMap[key] += amount;
-      }
-  });
+  const targets = rData.filter(row => ids.includes(String(row[COLS_FINAL.ID])));
+  const csvRows = [['部門コード（借方）', '科目コード', '勘定科目（借方）', '金額（借方）', '部門コード（貸方）', '勘定科目（貸方）', '金額（貸方）', '摘要']];
+  const fmtNum = n => Number(n).toLocaleString(), fmtDate = d => { const dt = new Date(d); return (dt.getMonth()+1) + '/' + dt.getDate(); };
 
-  // 5. 照合判定と更新
-  const results = []; // 更新用ステータス配列
-  
-  cData.forEach(row => {
-      const dateStr = formatDate(row[COLS_CARD.DATE]);
-      const cardName = String(row[COLS_CARD.CARD_NAME] || '').trim();
-      
-      let status = '判定不能';
-      if (dateStr && cardName) {
-          const key = `${dateStr}_${cardName}`;
-          const rTotal = receiptMap[key] || 0;
-          const cTotal = statementMap[key] || 0;
+  targets.forEach(row => {
+    const card = row[COLS_FINAL.CARD_NAME] || 'JCB', creditAcc = '未払費用 ' + card, date = fmtDate(row[COLS_FINAL.USE_DATE]), store = row[COLS_FINAL.STORE];
+    const user = String(row[COLS_FINAL.USER] || '').trim();
+    const deptCode = userDeptMap[user] || ''; 
+    const details = detailMap[String(row[COLS_FINAL.ID])] || [];
 
-          if (rTotal === 0) {
-              status = '未申請';
-          } else if (rTotal === cTotal) {
-              status = 'OK';
-          } else {
-              status = '金額不一致'; // (申請: ¥${rTotal}, 明細: ¥${cTotal}) などを入れてもよい
-          }
-      } else {
-          status = '情報不足';
-      }
-      results.push([status]);
-  });
-
-  // ステータス列を一括更新 (列インデックスは COLS_CARD.STATUS = 5, つまり6列目)
-  cSheet.getRange(2, COLS_CARD.STATUS + 1, results.length, 1).setValues(results);
-
-  return { success: true, message: '照合が完了しました。' };
-}
-
-/**
- * カード明細データを取得 (フロントエンド表示用)
- */
-function getCardStatementData() {
-  const sheet = getSheet(SHEETS.CARD_STATEMENT);
-  if (sheet.getLastRow() <= 1) return [];
-  
-  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 7).getValues();
-  // 新しい順に
-  return data.reverse().map(r => ({
-      id: r[0],
-      date: formatDate(r[1]),
-      cardName: r[2],
-      store: r[3],
-      amount: r[4],
-      status: r[5],
-      uploadDate: formatDate(r[6])
-  }));
-}
-
-/**
- * カード明細データをクリア
- */
-function clearCardStatement() {
-    const sheet = getSheet(SHEETS.CARD_STATEMENT);
-    if (sheet.getLastRow() > 1) {
-        sheet.deleteRows(2, sheet.getLastRow() - 1);
-    }
-    return { success: true };
-}
-
-// --- 既存関数 ---
-function getHistoryData(filter) {
-  try {
-    const user = getCurrentUser();
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = getSheet(SHEETS.RECEIPTS);
-    const dSheet = getSheet(SHEETS.DETAILS);
-    
-    if (sheet.getLastRow() <= 1) return [];
-
-    // ★取得範囲を CARD_NAME まで拡張
-    const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS_FINAL.CARD_NAME + 1).getValues();
-    
-    const dDataRange = dSheet.getDataRange();
-    const dData = dDataRange.getLastRow() > 1 ? dDataRange.getValues().slice(1) : [];
-
-    const detailMap = {};
-    dData.forEach(d => {
-      const pid = String(d[1]);
-      if(!detailMap[pid]) detailMap[pid] = [];
-      detailMap[pid].push({ 
-        id: d[0], 
-        category: d[2], 
-        item: d[3], 
-        amount: d[4],
-        client: d[5],
-        participants: d[6],
-        memo: d[9]
+    if (details.length === 0) {
+      const amt = Number(row[COLS_FINAL.AMOUNT]);
+      csvRows.push([deptCode, '', '使途不明金', fmtNum(amt), '', creditAcc, fmtNum(amt), card + ' ' + store + ' ' + date]);
+    } else {
+      details.forEach(d => {
+        const accCode = accountCodeMap[d.category] || '';
+        csvRows.push([deptCode, accCode, d.category, fmtNum(d.amount), '', creditAcc, fmtNum(d.amount), card + ' ' + store + ' ' + d.item + ' ' + date]);
       });
-    });
-
-    let rows = data.map(row => {
-      const mStatus = row[COLS_FINAL.ADMIN_CHECK];
-      const nStatus = row[COLS_FINAL.PRESIDENT_CHECK];
-      let displayStatus = 'unknown';
-      if (nStatus === STATUS.DRAFT) displayStatus = 'draft';
-      else if (nStatus === STATUS.PENDING) displayStatus = 'pending';
-      else if (nStatus === STATUS.APPROVED) {
-          if (mStatus === STATUS.CHECKED) displayStatus = 'checked';
-          else displayStatus = 'approved';
-      }
-      else if (nStatus === STATUS.REJECTED) displayStatus = 'rejected';
-
-      return {
-        id: row[COLS_FINAL.ID],
-        date: formatDate(row[COLS_FINAL.USE_DATE]),
-        user: row[COLS_FINAL.USER],
-        store: row[COLS_FINAL.STORE],
-        amount: row[COLS_FINAL.AMOUNT],
-        status: displayStatus, 
-        rawStatusN: nStatus,
-        rawStatusM: mStatus,
-        hasInvoice: row[COLS_FINAL.INVOICE] === 'あり',
-        items: detailMap[String(row[COLS_FINAL.ID])] || [],
-        fileId: row[COLS_FINAL.FILE_ID],
-        globalMemo: row[COLS_FINAL.MEMO_GLOBAL] || '',
-        rejectComment: row[COLS_FINAL.REJECT_COMMENT] || '',
-        cardName: row[COLS_FINAL.CARD_NAME] || '' // ★カード名称
-      };
-    });
-
-    if (filter.view === 'history') {
-      if (user.role !== '経理' && user.role !== '管理者' && user.role !== '社長') {
-        rows = rows.filter(r => r.user === user.name);
-      }
-    } else if (filter.view === 'president') {
-      rows = rows.filter(r => r.rawStatusN === STATUS.PENDING);
-    } else if (filter.view === 'admin') {
-      rows = rows.filter(r => r.rawStatusN === STATUS.APPROVED && r.rawStatusM !== STATUS.CHECKED);
     }
-
-    return rows.reverse();
-  } catch (e) {
-    console.error("getHistoryData Error", e);
-    return [];
-  }
+  });
+  return csvRows;
 }
 
-function getSingleApplicationData(id) {
-    try {
-        const ss = SpreadsheetApp.getActiveSpreadsheet();
-        const sheet = getSheet(SHEETS.RECEIPTS);
-        const dSheet = getSheet(SHEETS.DETAILS);
-        
-        // 全件取得 (範囲拡張)
-        const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS_FINAL.CARD_NAME + 1).getValues();
-        const dDataRange = dSheet.getDataRange();
-        const dData = dDataRange.getLastRow() > 1 ? dDataRange.getValues().slice(1) : [];
-
-        const rRow = data.find(row => String(row[COLS_FINAL.ID]) === String(id));
-        if (!rRow) return null;
-
-        const dRows = dData.filter(d => String(d[1]) === String(id));
-        
-        const item = {
-            id: rRow[COLS_FINAL.ID],
-            date: formatDate(rRow[COLS_FINAL.USE_DATE]),
-            user: rRow[COLS_FINAL.USER],
-            store: rRow[COLS_FINAL.STORE],
-            amount: rRow[COLS_FINAL.AMOUNT],
-            hasInvoice: rRow[COLS_FINAL.INVOICE] === 'あり',
-            fileId: rRow[COLS_FINAL.FILE_ID],
-            globalMemo: rRow[COLS_FINAL.MEMO_GLOBAL] || '',
-            rejectComment: rRow[COLS_FINAL.REJECT_COMMENT] || '',
-            cardName: rRow[COLS_FINAL.CARD_NAME] || '', // ★追加
-            items: dRows.map(d => ({
-                id: d[0],
-                category: d[2], 
-                item: d[3], 
-                amount: d[4],
-                client: d[5],
-                participants: d[6],
-                memo: d[9]
-            }))
-        };
-        return item;
-
-    } catch (e) {
-        console.error("getSingleApplicationData Error", e);
-        return null;
-    }
+function markAsExported(ids) {
+  const sheet = getSheet(SHEETS.RECEIPTS), data = sheet.getDataRange().getValues();
+  ids.forEach(id => {
+    for(let i=1; i<data.length; i++) if(String(data[i][COLS_FINAL.ID]) === String(id)) sheet.getRange(i+1, COLS_FINAL.ADMIN_CHECK + 1).setValue(STATUS.EXPORTED);
+  });
+  return { success: true };
 }
 
-// --- Utils (既存) ---
 function getSheet(name) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(name);
@@ -646,102 +291,120 @@ function formatDate(date) {
 }
 function callGeminiApi(base64, mimeType) {
   if (!GEMINI_API_KEY) return {};
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-  const prompt = `領収書画像解析。JSON出力。項目:use_date(YYYY-MM-DD),store_name,total_amount(数値),item_name,category,has_invoice(bool),client(取引先名・相手先),participants(人数または参加者名),summary_text(領収書全体の内容を簡潔にまとめたメモ)`;
-  const payload = { 
-    contents: [{ 
-      parts: [
-        { text: prompt }, 
-        { inlineData: { mimeType: mimeType, data: base64 } }
-      ] 
-    }] 
-  };
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY;
+  const prompt = "領収書画像解析。JSON出力。項目:use_date(YYYY-MM-DD),store_name,total_amount(数値),item_name,category,has_invoice(bool),client,participants,summary_text";
+  const payload = { contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: mimeType, data: base64 } }] }] };
   try {
-    const options = {
-      method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true
-  };
-    const res = UrlFetchApp.fetch(url, options);
+    const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
     const json = JSON.parse(res.getContentText());
-    if (json.error) return {};
-    if (!json.candidates || json.candidates.length === 0) return {};
-    let text = json.candidates[0].content.parts[0].text;
-    text = text.replace(/```json|```/g, '').trim();
-    return JSON.parse(text);
-  } catch (e) {
-    return {};
-  }
+    if (!json.candidates) return {};
+    const text = json.candidates[0].content.parts[0].text;
+    return JSON.parse(text.replace(/```json|```/g, '').trim());
+  } catch (e) { return {}; }
 }
-function updateLearningData(item, category) {
-  if(!item || !category) return;
-  const sheet = getSheet(SHEETS.LEARNING);
-  sheet.appendRow([item, category, new Date()]);
-}
-function predictCategoryByItem(keyword) {
-  const sheet = getSheet(SHEETS.LEARNING);
-  if (sheet.getLastRow() < 2) return null;
-  const data = sheet.getRange(2, 1, sheet.getLastRow()-1, 2).getValues();
-  for(let i=data.length-1; i>=0; i--) if(String(data[i][0]).includes(keyword)) return data[i][1];
-  return null;
+function getHistoryData(filter) {
+  try {
+    const user = getCurrentUser(), rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
+    if (rSheet.getLastRow() <= 1) return [];
+    const data = rSheet.getRange(2, 1, rSheet.getLastRow() - 1, COLS_FINAL.CARD_NAME + 1).getValues();
+    const dupMap = {};
+    data.forEach(row => {
+      const k = formatDate(row[COLS_FINAL.USE_DATE]) + "_" + String(row[COLS_FINAL.STORE]).trim() + "_" + Number(row[COLS_FINAL.AMOUNT]);
+      dupMap[k] = (dupMap[k] || 0) + 1;
+    });
+    const dData = dSheet.getDataRange().getLastRow() > 1 ? dSheet.getDataRange().getValues().slice(1) : [];
+    const detailMap = {};
+    dData.forEach(d => {
+      const pid = String(d[1]);
+      if(!detailMap[pid]) detailMap[pid] = [];
+      detailMap[pid].push({ category: d[2], item: d[3], amount: d[4] });
+    });
+    let rows = data.map(row => {
+      const mStatus = row[COLS_FINAL.ADMIN_CHECK], nStatus = row[COLS_FINAL.PRESIDENT_CHECK];
+      let displayStatus = 'draft';
+      if (nStatus === STATUS.PENDING) displayStatus = 'pending';
+      else if (nStatus === STATUS.APPROVED) {
+        if (mStatus === STATUS.EXPORTED) displayStatus = 'exported';
+        else if (mStatus === STATUS.CHECKED) displayStatus = 'checked';
+        else displayStatus = 'approved';
+      }
+      else if (nStatus === STATUS.REJECTED) displayStatus = 'rejected';
+      const key = formatDate(row[COLS_FINAL.USE_DATE]) + "_" + String(row[COLS_FINAL.STORE]).trim() + "_" + Number(row[COLS_FINAL.AMOUNT]);
+      return {
+        id: row[COLS_FINAL.ID], date: formatDate(row[COLS_FINAL.USE_DATE]), user: row[COLS_FINAL.USER], store: row[COLS_FINAL.STORE], amount: row[COLS_FINAL.AMOUNT],
+        status: displayStatus, rawStatusM: mStatus, items: detailMap[String(row[COLS_FINAL.ID])] || [], fileId: row[COLS_FINAL.FILE_ID], isDuplicate: (dupMap[key] > 1)
+      };
+    });
+    if (filter.view === 'history' && user.role !== '経理' && user.role !== '管理者' && user.role !== '社長') rows = rows.filter(r => r.user === user.name);
+    else if (filter.view === 'president') rows = rows.filter(r => r.status === 'pending');
+    else if (filter.view === 'admin') rows = rows.filter(r => r.status === 'approved' || r.status === 'checked');
+    return rows.reverse();
+  } catch (e) { return []; }
 }
 
-// --- Bulk Actions (Existing) ---
-function submitBulkApplications(ids) { return updateStatusBulk(ids, STATUS.PENDING, 'president'); }
-function checkBulk(ids) { return updateStatusBulk(ids, STATUS.CHECKED, 'admin'); }
-function rejectBulkWithComment(ids, comment) {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = getSheet(SHEETS.RECEIPTS);
-    const data = sheet.getDataRange().getValues();
-    ids.forEach(id => {
-        for(let i=1; i<data.length; i++) {
-            if(String(data[i][COLS_FINAL.ID]) === String(id)) {
-                sheet.getRange(i+1, COLS_FINAL.PRESIDENT_CHECK + 1).setValue(STATUS.REJECTED);
-                sheet.getRange(i+1, COLS_FINAL.REJECT_COMMENT + 1).setValue(comment);
-                break;
-            }
+/**
+ * 修正：画像を表示するためにBase64データを付与して返す
+ */
+function getSingleApplicationData(id) {
+    try {
+        const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
+        const data = rSheet.getRange(2, 1, rSheet.getLastRow() - 1, COLS_FINAL.CARD_NAME + 1).getValues();
+        const rRow = data.find(row => String(row[COLS_FINAL.ID]) === String(id));
+        if (!rRow) return null;
+        
+        // --- プレビュー用画像データの取得 ---
+        let base64Data = null;
+        const fileId = rRow[COLS_FINAL.FILE_ID];
+        if (fileId && fileId !== 'NO_FILE') {
+            try {
+              const file = DriveApp.getFileById(fileId);
+              const blob = file.getBlob();
+              const bytes = blob.getBytes();
+              base64Data = "data:" + blob.getContentType() + ";base64," + Utilities.base64Encode(bytes);
+            } catch(e) { console.error("Base64 fetch error", e); }
         }
-    });
-    return { success: true };
+
+        const dData = dSheet.getDataRange().getLastRow() > 1 ? dSheet.getDataRange().getValues().slice(1) : [];
+        const dRows = dData.filter(d => String(d[1]) === String(id));
+        
+        return {
+            id: rRow[COLS_FINAL.ID], date: formatDate(rRow[COLS_FINAL.USE_DATE]), user: rRow[COLS_FINAL.USER], store: rRow[COLS_FINAL.STORE],
+            amount: rRow[COLS_FINAL.AMOUNT], hasInvoice: rRow[COLS_FINAL.INVOICE] === 'あり', fileId: fileId,
+            base64Data: base64Data, // これを追加
+            globalMemo: rRow[COLS_FINAL.MEMO_GLOBAL] || '', cardName: rRow[COLS_FINAL.CARD_NAME] || '',
+            items: dRows.map(d => ({ id: d[0], category: d[2], item: d[3], amount: d[4], net: d[7], tax: d[8], memo: d[9] }))
+        };
+    } catch (e) { return null; }
 }
-function approveBulk(ids) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = getSheet(SHEETS.RECEIPTS);
-  const data = sheet.getDataRange().getValues();
+
+function submitBulkApplications(ids) { return updateStatusBulk(ids, STATUS.PENDING, 'president'); }
+function approveBulk(ids) { return updateStatusBulk(ids, STATUS.APPROVED, 'president'); }
+function checkBulk(ids) { return updateStatusBulk(ids, STATUS.CHECKED, 'admin'); }
+function updateStatusBulk(ids, newStatus, type) {
+  const sheet = getSheet(SHEETS.RECEIPTS), data = sheet.getDataRange().getValues();
+  const col = type === 'president' ? COLS_FINAL.PRESIDENT_CHECK : COLS_FINAL.ADMIN_CHECK;
   ids.forEach(id => {
-    for(let i=1; i<data.length; i++) {
-      if(String(data[i][COLS_FINAL.ID]) === String(id)) {
-        sheet.getRange(i+1, COLS_FINAL.PRESIDENT_CHECK + 1).setValue(STATUS.APPROVED);
-        sheet.getRange(i+1, COLS_FINAL.ADMIN_CHECK + 1).setValue('未チェック');
-        sheet.getRange(i+1, COLS_FINAL.REJECT_COMMENT + 1).setValue(''); 
-        break;
-      }
-    }
-  });
-  return {success: true};
-}
-function updateStatusBulk(ids, newStatus, targetColType) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = getSheet(SHEETS.RECEIPTS);
-  const data = sheet.getDataRange().getValues();
-  const targetCol = targetColType === 'president' ? COLS_FINAL.PRESIDENT_CHECK : COLS_FINAL.ADMIN_CHECK;
-  ids.forEach(id => {
-    for(let i=1; i<data.length; i++) {
-      if(String(data[i][COLS_FINAL.ID]) === String(id)) {
-        sheet.getRange(i+1, targetCol + 1).setValue(newStatus);
-        if(newStatus === STATUS.PENDING) sheet.getRange(i+1, COLS_FINAL.ADMIN_CHECK + 1).setValue('未チェック');
-        if (newStatus !== STATUS.REJECTED) sheet.getRange(i+1, COLS_FINAL.REJECT_COMMENT + 1).setValue(''); 
-        break;
-      }
+    for(let i=1; i<data.length; i++) if(String(data[i][COLS_FINAL.ID]) === String(id)) {
+      sheet.getRange(i+1, col + 1).setValue(newStatus);
+      if(newStatus === STATUS.PENDING) sheet.getRange(i+1, COLS_FINAL.ADMIN_CHECK + 1).setValue('未チェック');
     }
   });
   return { success: true };
 }
 function deleteApplication(id) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const rSheet = getSheet(SHEETS.RECEIPTS);
-  const dSheet = getSheet(SHEETS.DETAILS);
-  const rData = rSheet.getDataRange().getValues();
+  const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS), rData = rSheet.getDataRange().getValues();
   for(let i=rData.length-1; i>=1; i--) if(String(rData[i][COLS_FINAL.ID]) === String(id)) rSheet.deleteRow(i+1);
   const dData = dSheet.getDataRange().getValues();
   for(let i=dData.length-1; i>=1; i--) if(String(dData[i][1]) === String(id)) dSheet.deleteRow(i+1);
   return { success: true };
+}
+function rejectBulkWithComment(ids, comment) {
+    const rSheet = getSheet(SHEETS.RECEIPTS), data = rSheet.getDataRange().getValues();
+    ids.forEach(id => {
+        for(let i=1; i<data.length; i++) if(String(data[i][COLS_FINAL.ID]) === String(id)) {
+            rSheet.getRange(i+1, COLS_FINAL.PRESIDENT_CHECK + 1).setValue(STATUS.REJECTED);
+            rSheet.getRange(i+1, COLS_FINAL.REJECT_COMMENT + 1).setValue(comment);
+        }
+    });
+    return { success: true };
 }
