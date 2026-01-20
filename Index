@@ -14,6 +14,7 @@
     .nav-link:hover, .nav-link.active { background-color: rgba(255,255,255,0.2); color: white !important; font-weight: bold; }
     .user-info { color: white; border-left: 1px solid rgba(255,255,255,0.3); padding-left: 15px; margin-left: 10px; font-size: 0.9rem; }
     
+    /* 登録画面のデザイン維持 + スマホ最適化 */
     .drag-area { border: 2px dashed #dee2e6; border-radius: 12px; background: white; padding: 60px 20px; text-align: center; cursor: pointer; transition: all 0.3s; position: relative; overflow: hidden; }
     .drag-area:hover, .drag-area.active { border-color: #0d6efd; background-color: #f8faff; }
     .drag-icon-circle { width: 80px; height: 80px; background: #e7f1ff; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; color: #0d6efd; }
@@ -21,10 +22,8 @@
     .content-card { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid #e9ecef; overflow: hidden; padding: 20px; }
     .table thead th { background-color: #f8f9fa; border-bottom: 2px solid #dee2e6; font-size: 0.85rem; }
     
-    /* 修正：プレビューエリアの最適化 */
-    .preview-container { background: #333; display: flex; align-items: center; justify-content: center; position: relative; overflow: auto; height: 100%; width: 100%; }
-    #previewImage { max-width: 100%; max-height: 100%; object-fit: contain; }
-    #previewPdf { width: 100%; height: 100%; border: none; }
+    .preview-frame { width: 100%; height: 100%; border: none; background: #333; }
+    .preview-container { background: #333; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
     
     #loadingOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.85); z-index: 9999; display: none; flex-direction: column; justify-content: center; align-items: center; }
     .spinner-border { width: 3rem; height: 3rem; border-width: 0.25em; }
@@ -46,7 +45,7 @@
     }
     @media (max-width: 991.98px) { 
       .modal-fullscreen .modal-body { overflow-y: auto !important; } 
-      .preview-container { height: 40vh; min-height: 300px; width: 100%; }
+      .preview-container { height: 30vh; width: 100%; }
       .drag-area { padding: 20px 10px; }
       .drag-icon-circle { width: 50px; height: 50px; margin-bottom: 10px; }
       .drag-icon-circle i { font-size: 1.2rem; }
@@ -61,6 +60,7 @@
 <nav class="navbar navbar-expand-lg sticky-top mb-4">
   <div class="container-xl">
     <a class="navbar-brand" href="#"><i class="fas fa-file-invoice"></i> クレジット精算</a>
+    <!-- モバイル用トグラーボタンを復元 -->
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
       <span class="navbar-toggler-icon"></span>
     </button>
@@ -71,16 +71,13 @@
         <li class="nav-item approver-only" style="display:none;"><a class="nav-link" onclick="switchView('president')" href="#">③ 承認タスク</a></li>
         <li class="nav-item admin-only" style="display:none;"><a class="nav-link" onclick="switchView('admin')" href="#">④ 管理者画面</a></li>
       </ul>
-      <div class="user-info text-end">
-          <div id="userName" class="fw-bold">Guest</div>
-          <div id="userRole" class="small opacity-75">Loading...</div>
-          <div id="debugEmail" class="text-white-50" style="font-size: 0.6rem; margin-top: 2px;"></div>
-      </div>
+      <div class="user-info"><div id="userName" class="fw-bold">Guest</div><div id="userRole" class="small opacity-75">Loading...</div></div>
     </div>
   </div>
 </nav>
 
 <div class="container-xl pb-5">
+  <!-- View: Apply -->
   <div id="view-apply" class="view-section">
     <div class="d-flex justify-content-between align-items-end mb-4 border-bottom pb-2"><h3 class="fw-bold text-dark m-0">① 経費データ登録</h3></div>
     <div id="uploadArea" class="content-card p-5 text-center mx-auto" style="max-width: 800px;">
@@ -106,46 +103,98 @@
             <button class="btn btn-link text-muted btn-sm" onclick="clearPendingFiles()">全てクリア</button>
         </div>
       </div>
+      
+      <div class="mt-4 alert alert-info d-flex align-items-center text-start">
+        <i class="fas fa-info-circle fa-2x me-3"></i>
+        <div><small>AIが内容を解析し、自動的に入力画面が開きます。複数枚ある場合は連続して追加してください。</small></div>
+      </div>
     </div>
   </div>
 
+  <!-- View: History -->
   <div id="view-history" class="view-section" style="display:none;">
     <div class="d-flex justify-content-between mb-3 align-items-center"><h4>② 全履歴・申請</h4><button class="btn btn-sm btn-outline-primary" onclick="loadHistory()">更新</button></div>
     <div class="alert alert-primary py-2 d-flex justify-content-between align-items-center shadow-sm"><small>未申請項目を選択してまとめて申請</small><button id="btnBulkApply" class="btn btn-sm btn-primary fw-bold" disabled onclick="submitBulk()">一括申請</button></div>
     <div class="content-card p-0"><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr><th></th><th>操作</th><th>利用日</th><th>支払先</th><th>科目</th><th>金額</th><th>状態</th></tr></thead><tbody id="historyBody"></tbody></table></div></div>
   </div>
 
+  <!-- View: President -->
   <div id="view-president" class="view-section" style="display:none;">
     <div class="d-flex justify-content-between mb-3"><h4>③ 承認タスク</h4><div><button class="btn btn-sm btn-success me-2 fw-bold" onclick="approveSelected()">一括承認</button><button class="btn btn-sm btn-danger fw-bold" onclick="rejectSelectedPrepare()">差戻し</button></div></div>
     <div class="content-card p-0"><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr><th><input type="checkbox" onclick="toggleAll(this, '.pres-check')"></th><th width="100">詳細</th><th>申請者</th><th>利用日</th><th>店名</th><th class="text-end">金額</th></tr></thead><tbody id="presidentBody"></tbody></table></div></div>
   </div>
 
+  <!-- View: Admin -->
   <div id="view-admin" class="view-section" style="display:none;">
-    <div class="d-flex justify-content-between align-items-center mb-3"><h4>④ 管理者画面</h4><div class="d-flex gap-2"><button class="btn btn-outline-success fw-bold" onclick="processAdminAction('checkBulk')">選択を確認済みにする</button><button class="btn btn-primary fw-bold" onclick="downloadCSV('kanjo')">CSV出力して完了</button></div></div>
-    <div class="card mb-3 border-0 shadow-sm"><div class="card-body p-3"><div class="row g-2 align-items-center">
-        <div class="col-md-3"><label class="form-label small fw-bold">対象月</label><input type="month" id="adminFilterMonth" class="form-control form-control-sm" onchange="renderAdminTable()"></div>
-        <div class="col-md-3"><label class="form-label small fw-bold">検索</label><input type="text" id="adminFilterSearch" class="form-control form-control-sm" placeholder="店名・名前..." oninput="renderAdminTable()"></div>
-        <div class="col-md-3"><label class="form-label small fw-bold">状態フィルタ</label><select id="adminFilterStatus" class="form-select form-select-sm" onchange="renderAdminTable()"><option value="all" selected>すべて</option><option value="approved">経理未チェック</option><option value="checked">経理チェック済</option></select></div>
-        <div class="col-md-3 text-end pt-4"><span class="badge bg-light text-dark border shadow-sm"><span id="adminDisplayCount">0</span>件表示中</span></div>
-    </div></div></div>
-    <div class="content-card p-0"><div class="table-responsive" style="max-height: 60vh;"><table class="table table-hover align-middle mb-0" id="adminTable"><thead class="sticky-top bg-light"><tr><th width="40"><input type="checkbox" onclick="toggleAll(this, '.admin-check')"></th><th width="100">修正</th><th style="cursor:pointer" onclick="sortAdminData('date')">利用日</th><th>申請者</th><th>支払先</th><th>科目</th><th class="text-end">金額</th><th class="text-center">状態</th></tr></thead><tbody id="adminBody"></tbody></table></div></div>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4>④ 管理者画面</h4>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-success fw-bold" onclick="processAdminAction('checkBulk')">選択を確認済みにする</button>
+            <button class="btn btn-primary fw-bold" onclick="downloadCSV('kanjo')">CSV出力して完了</button>
+        </div>
+    </div>
+    
+    <div class="card mb-3 border-0 shadow-sm">
+        <div class="card-body p-3">
+            <div class="row g-2 align-items-center">
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">対象月</label>
+                    <input type="month" id="adminFilterMonth" class="form-control form-control-sm" onchange="renderAdminTable()">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">検索</label>
+                    <input type="text" id="adminFilterSearch" class="form-control form-control-sm" placeholder="店名・名前..." oninput="renderAdminTable()">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">状態フィルタ</label>
+                    <select id="adminFilterStatus" class="form-select form-select-sm" onchange="renderAdminTable()">
+                        <option value="all" selected>すべて</option>
+                        <option value="approved">経理未チェック</option>
+                        <option value="checked">経理チェック済</option>
+                    </select>
+                </div>
+                <div class="col-md-3 text-end pt-4">
+                    <span class="badge bg-light text-dark border shadow-sm"><span id="adminDisplayCount">0</span>件表示中</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="content-card p-0">
+        <div class="table-responsive" style="max-height: 60vh;">
+            <table class="table table-hover align-middle mb-0" id="adminTable">
+                <thead class="sticky-top bg-light">
+                    <tr>
+                        <th width="40"><input type="checkbox" onclick="toggleAll(this, '.admin-check')"></th>
+                        <th width="100">修正</th>
+                        <th style="cursor:pointer" onclick="sortAdminData('date')">利用日</th>
+                        <th>申請者</th>
+                        <th>支払先</th>
+                        <th>科目</th>
+                        <th class="text-end">金額</th>
+                        <th class="text-center">状態</th>
+                    </tr>
+                </thead>
+                <tbody id="adminBody"></tbody>
+            </table>
+        </div>
+    </div>
   </div>
 </div>
 
+<!-- Edit Modal -->
 <div class="modal fade" id="editModal" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-fullscreen"><div class="modal-content"><div class="modal-body p-0 h-100">
     <input type="hidden" id="editId">
     <div class="row g-0 h-100">
-      <!-- 修正：プレビューエリアをimgタグに変更 -->
-      <div class="col-lg-6 bg-dark preview-container">
-        <img id="previewImage" src="" alt="領収書プレビュー" style="display:none;">
-        <iframe id="previewPdf" src="" style="display:none;"></iframe>
-        <div id="noPreview" class="text-white text-center" style="display:none;"><i class="fas fa-eye-slash fa-3x mb-3"></i><br>プレビュー不可</div>
-      </div>
+      <div class="col-lg-6 bg-dark preview-container"><iframe id="previewFrame" class="preview-frame" src=""></iframe><div id="noPreview" class="text-white" style="display:none;"><i class="fas fa-eye-slash fa-3x mb-3"></i><br>プレビュー不可</div></div>
       <div class="col-lg-6 h-100 d-flex flex-column form-section" style="background: #f5f7fa;">
-        <div class="bg-white border-bottom px-4 py-3 d-flex justify-content-between align-items-center shadow-sm"><h5 id="modalTitle" class="m-0 fw-bold">修正・確認</h5><div id="modalActions"></div></div>
+        <div class="bg-white border-bottom px-4 py-3 d-flex justify-content-between align-items-center shadow-sm">
+          <h5 id="modalTitle" class="m-0 fw-bold">修正・確認</h5>
+          <div id="modalActions"></div>
+        </div>
         <div class="p-4 form-scroll-area">
-          <div id="duplicateAlert" class="alert alert-warning mb-3 d-flex align-items-center" style="display:none;"><i class="fas fa-exclamation-triangle me-2"></i><div><strong>重複の可能性があります</strong><br><small>同じ日付、店名、金額のデータが既に存在します。</small></div></div>
+          <div id="duplicateAlert" class="alert alert-warning mb-3 d-flex align-items-center" style="display:none;"><i class="fas fa-exclamation-triangle me-2"></i><div><strong>重複の可能性</strong><br><small>同じ日付、店名、金額のデータが既に存在します。</small></div></div>
           <div class="card border-0 shadow-sm mb-3"><div class="card-body"><div class="row g-3">
             <div class="col-6"><label class="form-label small fw-bold">申請日</label><input type="date" class="form-control" id="editDate"></div>
             <div class="col-6"><label class="form-label small fw-bold">使用者</label><input type="text" class="form-control bg-light" id="editUser" readonly></div>
@@ -153,7 +202,6 @@
             <div class="col-12 border-top pt-3"><div class="row align-items-center"><div class="col-5"><div class="form-check"><input type="checkbox" id="editInvoice" class="form-check-input"><label class="form-check-label small fw-bold">インボイス番号</label></div></div><div class="col-7 text-end"><label class="small text-muted d-block mb-1">税込合計</label><input type="number" class="form-control text-end fw-bold" id="editAmount" style="color: #0d6efd; font-size: 1.2rem;"></div></div></div>
             <div class="col-12"><label class="form-label small text-muted">全体メモ</label><input type="text" class="form-control form-control-sm" id="editGlobalMemo"></div>
           </div></div></div>
-          
           <h6 class="fw-bold mt-4 mb-2"><i class="fas fa-list me-2"></i>明細入力</h6>
           <div id="detailItemsContainer"></div>
           <div class="edit-only-div mt-2"><button class="btn btn-sm btn-outline-success w-100" onclick="addDetailItem()">+ 明細を追加</button></div>
@@ -163,7 +211,7 @@
   </div></div></div>
 </div>
 
-<div class="modal fade" id="rejectModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header fw-bold text-danger">差戻し理由の入力</div><div class="modal-body"><textarea id="rejectCommentInput" class="form-control" rows="3" placeholder="理由を入力してください"></textarea></div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button><button class="btn btn-danger" onclick="rejectConfirm()">差戻しを実行</button></div></div></div></div>
+<div class="modal fade" id="rejectModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header fw-bold text-danger">差戻し理由</div><div class="modal-body"><textarea id="rejectCommentInput" class="form-control" rows="3"></textarea></div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button><button class="btn btn-danger" onclick="rejectConfirm()">実行</button></div></div></div></div>
 
 <datalist id="categoryList"></datalist>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -185,8 +233,6 @@ window.onload = function() {
       currentUser = user;
       document.getElementById('userName').textContent = user.name;
       document.getElementById('userRole').textContent = user.role;
-      document.getElementById('debugEmail').textContent = user.email; 
-      
       if(['社長','経理'].includes(user.role)) document.querySelectorAll('.approver-only').forEach(function(e){ e.style.display='block'; });
       if(['管理者','経理'].includes(user.role)) document.querySelectorAll('.admin-only').forEach(function(e){ e.style.display='block'; });
       loadMasters(); loadHistory();
@@ -198,20 +244,21 @@ window.onload = function() {
   } catch (e) { alert("Load Error: " + e.message); }
 };
 
-function switchView(viewName) {
+function switchView(view) {
   document.querySelectorAll('.view-section').forEach(function(e){ e.style.display = 'none'; });
-  document.getElementById('view-' + viewName).style.display = 'block';
+  document.getElementById('view-' + view).style.display = 'block';
   document.querySelectorAll('.nav-link').forEach(function(e){ e.classList.remove('active'); });
-  const target = document.querySelector('a[onclick="switchView(\'' + viewName + '\')"]');
+  const target = document.querySelector('a[onclick="switchView(\'' + view + '\')"]');
   if(target) target.classList.add('active');
   
+  // モバイル対応：ビュー切り替え時にナビゲーションメニューを閉じる
   const navbarCollapse = document.getElementById('navbarNav');
-  if (navbarCollapse && navbarCollapse.classList.contains('show')) {
+  if (navbarCollapse.classList.contains('show')) {
       const bsCollapse = bootstrap.Collapse.getInstance(navbarCollapse);
       if (bsCollapse) bsCollapse.hide();
   }
 
-  if(viewName === 'history') loadHistory(); else if(viewName === 'president') loadPresidentData(); else if(viewName === 'admin') loadAdminData();
+  if(view === 'history') loadHistory(); else if(view === 'president') loadPresidentData(); else if(view === 'admin') loadAdminData();
 }
 
 function renderAdminTable() {
@@ -346,7 +393,6 @@ function openEditWithData(data, edit) {
     const isA = currentUser && ['管理者','経理'].includes(currentUser.role), isE = edit || isA;
     document.getElementById('duplicateAlert').style.display = data.isDuplicate ? 'flex' : 'none';
     const ma = document.getElementById('modalActions'), mt = document.getElementById('modalTitle');
-    
     if(isE) {
         const rem = pendingDrafts.length > 0 ? pendingDrafts.length - (currentDraftIndex + 1) : 0;
         let btns = '<button class="btn btn-sm btn-outline-secondary me-2 fw-bold" onclick="editModal.hide()">閉じる</button>';
@@ -362,7 +408,6 @@ function openEditWithData(data, edit) {
         document.querySelector('.edit-only-div').style.display = 'none';
         mt.textContent = '詳細確認';
     }
-    
     document.getElementById('editId').value = data.id || ''; document.getElementById('editDate').value = data.date || ''; 
     document.getElementById('editUser').value = data.user || (currentUser ? currentUser.name : ''); 
     document.getElementById('editStore').value = data.store || ''; 
@@ -370,28 +415,9 @@ function openEditWithData(data, edit) {
     document.getElementById('editGlobalMemo').value = data.globalMemo || '';
     detailData = data.items && data.items.length ? JSON.parse(JSON.stringify(data.items)) : [{category:'', item:'', amount:''}]; 
     renderDetails(!isE);
-    
-    // --- プレビュー表示の更新 (Base64データを使用) ---
-    const img = document.getElementById('previewImage');
-    const pdf = document.getElementById('previewPdf');
-    const none = document.getElementById('noPreview');
-    
-    img.style.display = 'none';
-    pdf.style.display = 'none';
-    none.style.display = 'none';
-
-    if(data.base64Data) {
-        if(data.base64Data.includes("application/pdf")) {
-            pdf.src = data.base64Data;
-            pdf.style.display = 'block';
-        } else {
-            img.src = data.base64Data;
-            img.style.display = 'block';
-        }
-    } else {
-        none.style.display = 'block';
-    }
-    
+    const pf = document.getElementById('previewFrame'), np = document.getElementById('noPreview');
+    if(data.fileId && data.fileId !== 'NO_FILE') { pf.src = 'https://drive.google.com/file/d/' + data.fileId + '/preview'; pf.style.display='block'; np.style.display='none'; }
+    else { pf.src = ''; pf.style.display='none'; np.style.display='block'; }
     editModal.show();
 }
 
