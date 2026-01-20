@@ -1,9 +1,9 @@
 /**
  * クレジットカード経費精算アプリ (統合版)
- * Ver 4.3 (Preview Reliability Fix)
+ * Ver 4.0 (Mobile UX & Guest Mode Optimization)
  * * 修正内容:
- * 1. プレビュー表示を確実にするため、GAS側でファイルデータをBase64エンコードしてフロントに渡すよう変更。
- * 2. 既存のCSV出力・重複チェック・管理者ロジックを完全維持。
+ * 1. ユーザー取得失敗時（未ログイン・未登録）にエラーを返さず「ゲスト」として扱う。
+ * 2. 撮影/登録ボタンの統合に伴うフロントエンドへのデータ受け渡しを最適化。
  */
 
 // --- 定数・設定 ---
@@ -56,16 +56,22 @@ function doGet(e) {
 
 /**
  * ユーザー情報を取得
+ * 修正：エラー時にポップアップを出さないよう、デフォルト値を返す
  */
 function getCurrentUser(email) {
   try {
-    let activeEmail = Session.getActiveUser().getEmail();
-    if (!activeEmail) {
-      activeEmail = Session.getEffectiveUser().getEmail();
-    }
+    const activeUser = Session.getActiveUser().getEmail();
+    const targetEmail = email || activeUser;
     
-    const targetEmail = (email || activeEmail || "").trim().toLowerCase();
-    const guestUser = { name: 'ゲスト', email: targetEmail || 'unknown', role: '一般', card: '', dept: '', canFix: false };
+    // ゲスト用デフォルトオブジェクト
+    const guestUser = { 
+      name: 'ゲスト', 
+      email: targetEmail || 'unknown', 
+      role: '一般', 
+      card: '', 
+      dept: '', 
+      canFix: false 
+    };
 
     if (!targetEmail) return guestUser;
     
@@ -76,20 +82,21 @@ function getCurrentUser(email) {
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       const masterEmail = String(row[3] || "").trim().toLowerCase();
-      if (masterEmail === targetEmail) {
+      if (masterEmail === targetEmail.toLowerCase()) {
         return { 
           name: String(row[0] || "No Name"), 
           email: targetEmail, 
           role: String(row[1] || "一般"), 
           card: String(row[2] || ""), 
-          dept: String(row[4] || ""), 
+          dept: String(row[4] || ""), // E列: 部門コード
           canFix: true 
         };
       }
     }
     return guestUser;
   } catch (e) {
-    return { name: 'システムエラー', email: 'error', role: 'Error', error: e.message };
+    console.error("User Auth Error: " + e.message);
+    return { name: 'システムエラー', email: '', role: 'Error', error: e.message };
   }
 }
 
@@ -97,7 +104,7 @@ function getMasters() {
   try {
     const sheet = getSheet(SHEETS.ACCOUNTS);
     const data = sheet.getDataRange().getValues();
-    const accounts = data.slice(1).map(r => String(r[1] || '').trim()).filter(Boolean);
+    const accounts = data.slice(1).map(r => String(r[1] || '')).filter(Boolean);
     return { accounts: accounts };
   } catch (e) {
     return { accounts: [] };
@@ -341,42 +348,22 @@ function getHistoryData(filter) {
     return rows.reverse();
   } catch (e) { return []; }
 }
-
-/**
- * 修正：画像を表示するためにBase64データを付与して返す
- */
 function getSingleApplicationData(id) {
     try {
         const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
         const data = rSheet.getRange(2, 1, rSheet.getLastRow() - 1, COLS_FINAL.CARD_NAME + 1).getValues();
         const rRow = data.find(row => String(row[COLS_FINAL.ID]) === String(id));
         if (!rRow) return null;
-        
-        // --- プレビュー用画像データの取得 ---
-        let base64Data = null;
-        const fileId = rRow[COLS_FINAL.FILE_ID];
-        if (fileId && fileId !== 'NO_FILE') {
-            try {
-              const file = DriveApp.getFileById(fileId);
-              const blob = file.getBlob();
-              const bytes = blob.getBytes();
-              base64Data = "data:" + blob.getContentType() + ";base64," + Utilities.base64Encode(bytes);
-            } catch(e) { console.error("Base64 fetch error", e); }
-        }
-
         const dData = dSheet.getDataRange().getLastRow() > 1 ? dSheet.getDataRange().getValues().slice(1) : [];
         const dRows = dData.filter(d => String(d[1]) === String(id));
-        
         return {
             id: rRow[COLS_FINAL.ID], date: formatDate(rRow[COLS_FINAL.USE_DATE]), user: rRow[COLS_FINAL.USER], store: rRow[COLS_FINAL.STORE],
-            amount: rRow[COLS_FINAL.AMOUNT], hasInvoice: rRow[COLS_FINAL.INVOICE] === 'あり', fileId: fileId,
-            base64Data: base64Data, // これを追加
+            amount: rRow[COLS_FINAL.AMOUNT], hasInvoice: rRow[COLS_FINAL.INVOICE] === 'あり', fileId: rRow[COLS_FINAL.FILE_ID],
             globalMemo: rRow[COLS_FINAL.MEMO_GLOBAL] || '', cardName: rRow[COLS_FINAL.CARD_NAME] || '',
             items: dRows.map(d => ({ id: d[0], category: d[2], item: d[3], amount: d[4], net: d[7], tax: d[8], memo: d[9] }))
         };
     } catch (e) { return null; }
 }
-
 function submitBulkApplications(ids) { return updateStatusBulk(ids, STATUS.PENDING, 'president'); }
 function approveBulk(ids) { return updateStatusBulk(ids, STATUS.APPROVED, 'president'); }
 function checkBulk(ids) { return updateStatusBulk(ids, STATUS.CHECKED, 'admin'); }
