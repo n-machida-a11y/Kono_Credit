@@ -1,9 +1,6 @@
 /**
  * クレジットカード経費精算アプリ (統合版)
- * Ver 4.0 (Mobile UX & Guest Mode Optimization)
- * * 修正内容:
- * 1. ユーザー取得失敗時（未ログイン・未登録）にエラーを返さず「ゲスト」として扱う。
- * 2. 撮影/登録ボタンの統合に伴うフロントエンドへのデータ受け渡しを最適化。
+ * Ver 4.7 (Update: Reconciliation History & Admin Status)
  */
 
 // --- 定数・設定 ---
@@ -27,20 +24,13 @@ const STATUS = {
 };
 
 const COLS_FINAL = {
-  ID: 0, 
-  DATE: 1, 
-  USE_DATE: 2, 
-  USER: 3, 
-  STORE: 4, 
-  AMOUNT: 5, 
-  MEMO_GLOBAL: 6,
-  FILE_NAME: 7, 
-  FILE_ID: 8, 
-  INVOICE: 11,
-  ADMIN_CHECK: 12,
-  PRESIDENT_CHECK: 13,
-  REJECT_COMMENT: 14,
-  CARD_NAME: 15
+  ID: 0, DATE: 1, USE_DATE: 2, USER: 3, STORE: 4, AMOUNT: 5, MEMO_GLOBAL: 6,
+  FILE_NAME: 7, FILE_ID: 8, INVOICE: 11, ADMIN_CHECK: 12, PRESIDENT_CHECK: 13,
+  REJECT_COMMENT: 14, CARD_NAME: 15
+};
+
+const COLS_STATEMENT = {
+  ID: 0, CREATED_AT: 1, CARD_NUM: 2, HOLDER: 3, DATE: 4, STORE: 5, AMOUNT: 6, STATUS: 7, LINK_ID: 8
 };
 
 const PROPS = PropertiesService.getScriptProperties();
@@ -56,65 +46,78 @@ function doGet(e) {
 
 /**
  * ユーザー情報を取得
- * 修正：エラー時にポップアップを出さないよう、デフォルト値を返す
  */
-function getCurrentUser(email) {
+function getCurrentUser(savedName) {
   try {
-    const activeUser = Session.getActiveUser().getEmail();
-    const targetEmail = email || activeUser;
-    
-    // ゲスト用デフォルトオブジェクト
-    const guestUser = { 
-      name: 'ゲスト', 
-      email: targetEmail || 'unknown', 
-      role: '一般', 
-      card: '', 
-      dept: '', 
-      canFix: false 
-    };
-
-    if (!targetEmail) return guestUser;
-    
+    const activeUserEmail = Session.getActiveUser().getEmail();
+    const guestUser = { name: 'ゲスト', email: activeUserEmail || 'unknown', role: '一般', card: '', dept: '', canFix: false, isGuest: true };
     const sheet = getSheet(SHEETS.USERS);
     const data = sheet.getDataRange().getValues();
     if (data.length <= 1) return guestUser;
     
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      const masterEmail = String(row[3] || "").trim().toLowerCase();
-      if (masterEmail === targetEmail.toLowerCase()) {
-        return { 
-          name: String(row[0] || "No Name"), 
-          email: targetEmail, 
-          role: String(row[1] || "一般"), 
-          card: String(row[2] || ""), 
-          dept: String(row[4] || ""), // E列: 部門コード
-          canFix: true 
-        };
+    if (activeUserEmail) {
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        if (String(row[3] || "").trim().toLowerCase() === activeUserEmail.toLowerCase()) {
+          return { name: String(row[0]||""), email: activeUserEmail, role: String(row[1]||"一般"), card: String(row[2]||""), dept: String(row[4]||""), canFix: true, isGuest: false };
+        }
+      }
+    }
+    if (savedName) {
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        if (String(row[0] || "").trim() === savedName) {
+          return { name: savedName, email: activeUserEmail||String(row[3]||""), role: String(row[1]||"一般"), card: String(row[2]||""), dept: String(row[4]||""), canFix: true, isGuest: false };
+        }
       }
     }
     return guestUser;
   } catch (e) {
-    console.error("User Auth Error: " + e.message);
+    console.error("User Fetch Error: " + e.message);
     return { name: 'システムエラー', email: '', role: 'Error', error: e.message };
+  }
+}
+
+/**
+ * プレビュー用
+ */
+function getFileAsBase64(fileId) {
+  if (!fileId || fileId === 'NO_FILE') return null;
+  try {
+    const file = DriveApp.getFileById(fileId);
+    const blob = file.getBlob();
+    return `data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}`;
+  } catch (e) {
+    console.error("File Access Error: " + e.message);
+    return null;
   }
 }
 
 function getMasters() {
   try {
-    const sheet = getSheet(SHEETS.ACCOUNTS);
-    const data = sheet.getDataRange().getValues();
-    const accounts = data.slice(1).map(r => String(r[1] || '')).filter(Boolean);
-    return { accounts: accounts };
-  } catch (e) {
-    return { accounts: [] };
-  }
+    const aSheet = getSheet(SHEETS.ACCOUNTS);
+    const accounts = aSheet.getDataRange().getValues().slice(1).map(r => String(r[1] || '')).filter(Boolean);
+    const uSheet = getSheet(SHEETS.USERS);
+    const users = uSheet.getDataRange().getValues().slice(1).map(r => String(r[0] || '')).filter(Boolean);
+    return { accounts: accounts, users: users };
+  } catch (e) { return { accounts: [], users: [] }; }
 }
 
-// --- 学習機能 ---
+// --- 学習・データ操作系 ---
 function updateLearningData(key, value, type = 'CATEGORY') {
   if(!key || !value) return;
   const sheet = getSheet(SHEETS.LEARNING);
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    const rowKey = String(data[i][0]);
+    const rowType = String(data[i][3] || 'CATEGORY');
+    if (rowKey === key && rowType === type) {
+      if (String(data[i][1]) === value) return;
+      sheet.getRange(i + 1, 2).setValue(value);
+      sheet.getRange(i + 1, 3).setValue(new Date());
+      return;
+    }
+  }
   sheet.appendRow([key, value, new Date(), type]);
 }
 
@@ -123,12 +126,10 @@ function findLearnedData(keyword, type = 'CATEGORY') {
   if (sheet.getLastRow() < 2) return null;
   const data = sheet.getDataRange().getValues();
   for(let i=data.length-1; i>=1; i--) {
-    const rowKey = String(data[i][0]);
-    const rowValue = String(data[i][1]);
-    const rowType = String(data[i][3] || 'CATEGORY');
-    if (rowType === type) {
-      if (type === 'STORE' && (keyword === rowKey || keyword.startsWith(rowKey))) return rowValue;
-      if (type === 'CATEGORY' && keyword.includes(rowKey)) return rowValue;
+    if (String(data[i][3] || 'CATEGORY') === type) {
+      const rowKey = String(data[i][0]);
+      if (type === 'STORE' && (keyword === rowKey || keyword.startsWith(rowKey))) return String(data[i][1]);
+      if (type === 'CATEGORY' && keyword.includes(rowKey)) return String(data[i][1]);
     }
   }
   return null;
@@ -140,36 +141,76 @@ function findCategoryInMaster(keyword) {
   const data = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
     const account = String(data[i][1] || '').trim();
+    if (account === keyword) return account;
+  }
+  for (let i = 1; i < data.length; i++) {
+    const account = String(data[i][1] || '').trim();
     if (account && keyword.includes(account)) return account;
   }
   return null;
 }
 
-// --- メイン処理 ---
+function predictCategoryByKeyword(itemName) {
+  if (!itemName) return null;
+  const map = {
+    '旅費交通費': ['タクシー', '運賃', '乗車', 'ETC', 'パーキング', '駐車', '切符', '飛行機', '空港', '駅', '高速'],
+    '会議費': ['コーヒー', '珈琲', '茶', '弁当', 'ドリンク', 'カフェ', '喫茶'],
+    '通信費/通話料': ['携帯', '電話', 'Wi-Fi', '切手', '郵便', 'サーバー', 'ドメイン'],
+    '研修費': ['書籍', '本', 'セミナー', '受講', '講座'],
+    '消耗品その他': ['ペン', 'ノート', 'ファイル', 'インク', '文具', 'PC', 'マウス', 'キーボード']
+  };
+  for (const [category, keywords] of Object.entries(map)) {
+    if (keywords.some(k => itemName.includes(k))) return category;
+  }
+  return null;
+}
+
 function uploadAndAnalyzeAndDraft(fileData) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('サーバーが混み合っています。');
   try {
-    const currentUser = getCurrentUser(); 
-    const cardName = currentUser.card || '';
     let fileId = 'NO_FILE';
     try {
       const blob = Utilities.newBlob(Utilities.base64Decode(fileData.base64), fileData.mimeType, fileData.fileName);
       const folder = FOLDER_ID ? DriveApp.getFolderById(FOLDER_ID) : DriveApp.getRootFolder();
       const file = folder.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
       fileId = file.getId();
     } catch(e) { console.error('File Save Error', e); }
     
     const aiResult = callGeminiApi(fileData.base64, fileData.mimeType);
+    
     let finalStoreName = aiResult.store_name || '';
     const learnedStoreName = findLearnedData(finalStoreName, 'STORE');
     if (learnedStoreName) finalStoreName = learnedStoreName;
     
-    let predictedCategory = aiResult.category;
-    if (!predictedCategory) predictedCategory = findLearnedData(aiResult.item_name || '', 'CATEGORY') || findLearnedData(finalStoreName, 'CATEGORY') || findCategoryInMaster(aiResult.item_name || '') || findCategoryInMaster(finalStoreName);
-    if (!predictedCategory) predictedCategory = '消耗品費';
+    let predictedCategory = '';
+    const categoryByStore = findLearnedData(finalStoreName, 'CATEGORY');
+    const itemName = aiResult.item_name || '';
     
+    if (categoryByStore) {
+        predictedCategory = categoryByStore;
+    } else if (aiResult.category && findCategoryInMaster(aiResult.category)) {
+        predictedCategory = aiResult.category;
+    } else {
+        predictedCategory = findLearnedData(itemName, 'CATEGORY') || 
+                            predictCategoryByKeyword(itemName) || 
+                            findCategoryInMaster(itemName) || 
+                            findCategoryInMaster(finalStoreName) || 
+                            '消耗品その他'; 
+    }
+
+    // --- 少額接待交際費判定ロジック ---
+    const totalAmount = Number(aiResult.total_amount) || 0;
+    const participantCount = Number(aiResult.participant_count) || 0;
+    const guestCount = Number(aiResult.guest_count) || 0;
+    const hostCount = Number(aiResult.host_count) || 0;
+    
+    if (predictedCategory.includes('接待') || predictedCategory.includes('交際')) {
+        if (participantCount > 0 && (totalAmount / participantCount) <= 10000) {
+            predictedCategory = '少額接待交際費';
+        }
+    }
+
     const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
     const regId = Utilities.getUuid(), now = new Date();
     const rRow = new Array(COLS_FINAL.CARD_NAME + 1).fill(''); 
@@ -178,21 +219,35 @@ function uploadAndAnalyzeAndDraft(fileData) {
     rRow[COLS_FINAL.USE_DATE] = aiResult.use_date || now;
     rRow[COLS_FINAL.USER] = fileData.userName;
     rRow[COLS_FINAL.STORE] = finalStoreName;
-    rRow[COLS_FINAL.AMOUNT] = aiResult.total_amount || 0;
+    rRow[COLS_FINAL.AMOUNT] = totalAmount;
     rRow[COLS_FINAL.MEMO_GLOBAL] = aiResult.summary_text || '';
     rRow[COLS_FINAL.FILE_NAME] = fileData.fileName;
     rRow[COLS_FINAL.FILE_ID] = fileId;
     rRow[COLS_FINAL.INVOICE] = aiResult.has_invoice ? 'あり' : 'なし';
     rRow[COLS_FINAL.ADMIN_CHECK] = '未チェック'; 
     rRow[COLS_FINAL.PRESIDENT_CHECK] = STATUS.DRAFT;
-    rRow[COLS_FINAL.CARD_NAME] = cardName;
+    rRow[COLS_FINAL.CARD_NAME] = fileData.cardName || '';
     rSheet.appendRow(rRow);
     
-    const total = Number(aiResult.total_amount) || 0;
-    const net = Math.round(total / 1.1), tax = total - net;
-    dSheet.appendRow([Utilities.getUuid(), regId, predictedCategory, aiResult.item_name || '品代', total, aiResult.client || '', aiResult.participants || '', net, tax, '']);
+    const net = Math.round(totalAmount / 1.1), tax = totalAmount - net;
     
-    return { success: true, id: regId, fileId: fileId, store: finalStoreName, amount: total, cardName: cardName };
+    dSheet.appendRow([
+        Utilities.getUuid(), 
+        regId, 
+        predictedCategory, 
+        itemName || '品代', 
+        totalAmount, 
+        aiResult.client || '', 
+        participantCount || '', 
+        net, 
+        tax, 
+        '', 
+        finalStoreName, 
+        guestCount || '', 
+        hostCount || ''   
+    ]);
+    
+    return { success: true, id: regId, fileId: fileId, store: finalStoreName, amount: totalAmount };
   } catch(e) { throw new Error(e.message); } finally { lock.releaseLock(); }
 }
 
@@ -217,35 +272,75 @@ function updateApplication(formData) {
       const dData = dSheet.getDataRange().getValues();
       for(let i=dData.length-1; i>=1; i--) if(String(dData[i][1]) === String(formData.id)) dSheet.deleteRow(i+1);
       const newRows = formData.items.map(it => {
-        updateLearningData(it.itemName, it.category, 'CATEGORY');
-        const price = Number(it.total_price), net = Math.round(price / 1.1), tax = price - net;
-        return [Utilities.getUuid(), formData.id, it.category, it.itemName, price, it.client || '', it.participants || '', net, tax, it.memo || ''];
+        if (newStore && it.category) updateLearningData(newStore, it.category, 'CATEGORY');
+        if (it.itemName && it.category) updateLearningData(it.itemName, it.category, 'CATEGORY');
+
+        return [
+            Utilities.getUuid(), 
+            formData.id, 
+            it.category, 
+            it.itemName, 
+            Number(it.total_price), 
+            it.client || '', 
+            it.participants || '', 
+            Number(it.net) || 0, 
+            Number(it.tax) || 0, 
+            it.memo || '',
+            it.place || '', 
+            it.guestCount || '', 
+            it.hostCount || ''  
+        ];
       });
       if (newRows.length > 0) dSheet.getRange(dSheet.getLastRow() + 1, 1, newRows.length, newRows[0].length).setValues(newRows);
   }
   return { success: true };
 }
 
+function getSingleApplicationData(id) {
+    try {
+        const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
+        const data = rSheet.getDataRange().getValues().slice(1);
+        const rRow = data.find(row => String(row[COLS_FINAL.ID]) === String(id));
+        if (!rRow) return null;
+        const dData = dSheet.getDataRange().getLastRow() > 1 ? dSheet.getDataRange().getValues().slice(1) : [];
+        const dRows = dData.filter(d => String(d[1]) === String(id));
+        
+        return {
+            id: rRow[COLS_FINAL.ID], date: formatDate(rRow[COLS_FINAL.USE_DATE]), user: rRow[COLS_FINAL.USER], store: rRow[COLS_FINAL.STORE],
+            amount: rRow[COLS_FINAL.AMOUNT], hasInvoice: rRow[COLS_FINAL.INVOICE] === 'あり', fileId: rRow[COLS_FINAL.FILE_ID],
+            globalMemo: rRow[COLS_FINAL.MEMO_GLOBAL] || '', cardName: rRow[COLS_FINAL.CARD_NAME] || '',
+            items: dRows.map(d => ({ 
+                id: d[0], 
+                category: d[2], 
+                item: d[3], 
+                amount: d[4], 
+                client: d[5], 
+                participants: d[6], 
+                net: d[7], 
+                tax: d[8], 
+                memo: d[9],
+                place: d[10] || '',
+                guestCount: d[11] || '',
+                hostCount: d[12] || ''
+            }))
+        };
+    } catch (e) { return null; }
+}
+
+// ...既存の関数 (getDataForCSV, markAsExported, getSheet, formatDate) ...
 function getDataForCSV(ids) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet(), rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
-  
-  const aSheet = getSheet(SHEETS.ACCOUNTS);
-  const aData = aSheet.getDataRange().getValues(), accountCodeMap = {};
+  const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
+  const aSheet = getSheet(SHEETS.ACCOUNTS), aData = aSheet.getDataRange().getValues(), accountCodeMap = {};
   for(let i=1; i<aData.length; i++) {
-    const code = String(aData[i][0] || '').trim();
-    const name = String(aData[i][1] || '').trim();
+    const code = String(aData[i][0] || '').trim(), name = String(aData[i][1] || '').trim();
     if(name) accountCodeMap[name] = code;
   }
-
-  const uSheet = getSheet(SHEETS.USERS);
-  const uData = uSheet.getDataRange().getValues(), userDeptMap = {};
+  const uSheet = getSheet(SHEETS.USERS), uData = uSheet.getDataRange().getValues(), userDeptMap = {};
   for(let i=1; i<uData.length; i++) {
-    const uName = String(uData[i][0] || '').trim();
-    const uDept = String(uData[i][4] || '').trim(); 
+    const uName = String(uData[i][0] || '').trim(), uDept = String(uData[i][4] || '').trim(); 
     if(uName) userDeptMap[uName] = uDept;
   }
-
-  const rData = rSheet.getRange(2, 1, rSheet.getLastRow() - 1, COLS_FINAL.CARD_NAME + 1).getValues();
+  const rData = rSheet.getDataRange().getValues();
   const dData = dSheet.getDataRange().getLastRow() > 1 ? dSheet.getDataRange().getValues().slice(1) : [];
   const detailMap = {};
   dData.forEach(d => {
@@ -254,14 +349,13 @@ function getDataForCSV(ids) {
     detailMap[pid].push({ category: d[2], item: d[3], amount: d[4] });
   });
 
-  const targets = rData.filter(row => ids.includes(String(row[COLS_FINAL.ID])));
   const csvRows = [['部門コード（借方）', '科目コード', '勘定科目（借方）', '金額（借方）', '部門コード（貸方）', '勘定科目（貸方）', '金額（貸方）', '摘要']];
   const fmtNum = n => Number(n).toLocaleString(), fmtDate = d => { const dt = new Date(d); return (dt.getMonth()+1) + '/' + dt.getDate(); };
 
-  targets.forEach(row => {
+  rData.slice(1).forEach(row => {
+    if(!ids.includes(String(row[COLS_FINAL.ID]))) return;
     const card = row[COLS_FINAL.CARD_NAME] || 'JCB', creditAcc = '未払費用 ' + card, date = fmtDate(row[COLS_FINAL.USE_DATE]), store = row[COLS_FINAL.STORE];
-    const user = String(row[COLS_FINAL.USER] || '').trim();
-    const deptCode = userDeptMap[user] || ''; 
+    const user = String(row[COLS_FINAL.USER] || '').trim(), deptCode = userDeptMap[user] || ''; 
     const details = detailMap[String(row[COLS_FINAL.ID])] || [];
 
     if (details.length === 0) {
@@ -269,8 +363,7 @@ function getDataForCSV(ids) {
       csvRows.push([deptCode, '', '使途不明金', fmtNum(amt), '', creditAcc, fmtNum(amt), card + ' ' + store + ' ' + date]);
     } else {
       details.forEach(d => {
-        const accCode = accountCodeMap[d.category] || '';
-        csvRows.push([deptCode, accCode, d.category, fmtNum(d.amount), '', creditAcc, fmtNum(d.amount), card + ' ' + store + ' ' + d.item + ' ' + date]);
+        csvRows.push([deptCode, accountCodeMap[d.category] || '', d.category, fmtNum(d.amount), '', creditAcc, fmtNum(d.amount), card + ' ' + store + ' ' + d.item + ' ' + date]);
       });
     }
   });
@@ -291,15 +384,17 @@ function getSheet(name) {
   if (!sheet) sheet = ss.insertSheet(name);
   return sheet;
 }
+
 function formatDate(date) {
   if (!date) return '';
-  if (typeof date === 'string') return date;
-  return Utilities.formatDate(new Date(date), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const d = new Date(date);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
+
 function callGeminiApi(base64, mimeType) {
   if (!GEMINI_API_KEY) return {};
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY;
-  const prompt = "領収書画像解析。JSON出力。項目:use_date(YYYY-MM-DD),store_name,total_amount(数値),item_name,category,has_invoice(bool),client,participants,summary_text";
+  const prompt = "領収書画像解析。JSON出力。項目:use_date(YYYY-MM-DD),store_name,total_amount(数値),item_name,category,has_invoice(bool),client,participants(文字列),participant_count(数値:合計人数),guest_count(数値:接待相手人数),host_count(数値:自社側人数),summary_text";
   const payload = { contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: mimeType, data: base64 } }] }] };
   try {
     const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
@@ -309,61 +404,59 @@ function callGeminiApi(base64, mimeType) {
     return JSON.parse(text.replace(/```json|```/g, '').trim());
   } catch (e) { return {}; }
 }
+
+// 照合情報を取得するために関数更新
 function getHistoryData(filter) {
   try {
-    const user = getCurrentUser(), rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
+    const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
+    const sSheet = getSheet(SHEETS.CARD_STATEMENT); // 照合確認用
+    
     if (rSheet.getLastRow() <= 1) return [];
-    const data = rSheet.getRange(2, 1, rSheet.getLastRow() - 1, COLS_FINAL.CARD_NAME + 1).getValues();
-    const dupMap = {};
-    data.forEach(row => {
-      const k = formatDate(row[COLS_FINAL.USE_DATE]) + "_" + String(row[COLS_FINAL.STORE]).trim() + "_" + Number(row[COLS_FINAL.AMOUNT]);
-      dupMap[k] = (dupMap[k] || 0) + 1;
-    });
+    const data = rSheet.getDataRange().getValues().slice(1);
     const dData = dSheet.getDataRange().getLastRow() > 1 ? dSheet.getDataRange().getValues().slice(1) : [];
+    
+    // 照合済みデータのマップを作成 (領収書ID -> true)
+    const reconciledMap = {};
+    if (sSheet.getLastRow() > 1) {
+        const sData = sSheet.getDataRange().getValues().slice(1);
+        sData.forEach(row => {
+            const linkId = String(row[COLS_STATEMENT.LINK_ID]); // 紐付け領収書ID
+            if(linkId) reconciledMap[linkId] = true;
+        });
+    }
+
     const detailMap = {};
     dData.forEach(d => {
       const pid = String(d[1]);
       if(!detailMap[pid]) detailMap[pid] = [];
       detailMap[pid].push({ category: d[2], item: d[3], amount: d[4] });
     });
+    const dupMap = {};
+    data.forEach(row => {
+      const k = formatDate(row[COLS_FINAL.USE_DATE]) + "_" + String(row[COLS_FINAL.STORE]).trim() + "_" + Number(row[COLS_FINAL.AMOUNT]);
+      dupMap[k] = (dupMap[k] || 0) + 1;
+    });
+    
     let rows = data.map(row => {
       const mStatus = row[COLS_FINAL.ADMIN_CHECK], nStatus = row[COLS_FINAL.PRESIDENT_CHECK];
-      let displayStatus = 'draft';
-      if (nStatus === STATUS.PENDING) displayStatus = 'pending';
-      else if (nStatus === STATUS.APPROVED) {
-        if (mStatus === STATUS.EXPORTED) displayStatus = 'exported';
-        else if (mStatus === STATUS.CHECKED) displayStatus = 'checked';
-        else displayStatus = 'approved';
-      }
-      else if (nStatus === STATUS.REJECTED) displayStatus = 'rejected';
-      const key = formatDate(row[COLS_FINAL.USE_DATE]) + "_" + String(row[COLS_FINAL.STORE]).trim() + "_" + Number(row[COLS_FINAL.AMOUNT]);
+      let ds = 'draft';
+      if (nStatus === STATUS.PENDING) ds = 'pending';
+      else if (nStatus === STATUS.APPROVED) ds = mStatus === STATUS.EXPORTED ? 'exported' : (mStatus === STATUS.CHECKED ? 'checked' : 'approved');
+      else if (nStatus === STATUS.REJECTED) ds = 'rejected';
       return {
         id: row[COLS_FINAL.ID], date: formatDate(row[COLS_FINAL.USE_DATE]), user: row[COLS_FINAL.USER], store: row[COLS_FINAL.STORE], amount: row[COLS_FINAL.AMOUNT],
-        status: displayStatus, rawStatusM: mStatus, items: detailMap[String(row[COLS_FINAL.ID])] || [], fileId: row[COLS_FINAL.FILE_ID], isDuplicate: (dupMap[key] > 1)
+        status: ds, items: detailMap[String(row[COLS_FINAL.ID])] || [], fileId: row[COLS_FINAL.FILE_ID], 
+        isDuplicate: (dupMap[formatDate(row[COLS_FINAL.USE_DATE]) + "_" + String(row[COLS_FINAL.STORE]).trim() + "_" + Number(row[COLS_FINAL.AMOUNT])] > 1),
+        isReconciled: !!reconciledMap[row[COLS_FINAL.ID]] // 照合ステータス
       };
     });
-    if (filter.view === 'history' && user.role !== '経理' && user.role !== '管理者' && user.role !== '社長') rows = rows.filter(r => r.user === user.name);
+    if (filter.view === 'history' && !['経理', '管理者', '社長'].includes(filter.role)) rows = rows.filter(r => r.user === filter.userName);
     else if (filter.view === 'president') rows = rows.filter(r => r.status === 'pending');
     else if (filter.view === 'admin') rows = rows.filter(r => r.status === 'approved' || r.status === 'checked');
     return rows.reverse();
   } catch (e) { return []; }
 }
-function getSingleApplicationData(id) {
-    try {
-        const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
-        const data = rSheet.getRange(2, 1, rSheet.getLastRow() - 1, COLS_FINAL.CARD_NAME + 1).getValues();
-        const rRow = data.find(row => String(row[COLS_FINAL.ID]) === String(id));
-        if (!rRow) return null;
-        const dData = dSheet.getDataRange().getLastRow() > 1 ? dSheet.getDataRange().getValues().slice(1) : [];
-        const dRows = dData.filter(d => String(d[1]) === String(id));
-        return {
-            id: rRow[COLS_FINAL.ID], date: formatDate(rRow[COLS_FINAL.USE_DATE]), user: rRow[COLS_FINAL.USER], store: rRow[COLS_FINAL.STORE],
-            amount: rRow[COLS_FINAL.AMOUNT], hasInvoice: rRow[COLS_FINAL.INVOICE] === 'あり', fileId: rRow[COLS_FINAL.FILE_ID],
-            globalMemo: rRow[COLS_FINAL.MEMO_GLOBAL] || '', cardName: rRow[COLS_FINAL.CARD_NAME] || '',
-            items: dRows.map(d => ({ id: d[0], category: d[2], item: d[3], amount: d[4], net: d[7], tax: d[8], memo: d[9] }))
-        };
-    } catch (e) { return null; }
-}
+
 function submitBulkApplications(ids) { return updateStatusBulk(ids, STATUS.PENDING, 'president'); }
 function approveBulk(ids) { return updateStatusBulk(ids, STATUS.APPROVED, 'president'); }
 function checkBulk(ids) { return updateStatusBulk(ids, STATUS.CHECKED, 'admin'); }
@@ -378,13 +471,16 @@ function updateStatusBulk(ids, newStatus, type) {
   });
   return { success: true };
 }
+
 function deleteApplication(id) {
-  const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS), rData = rSheet.getDataRange().getValues();
+  const rSheet = getSheet(SHEETS.RECEIPTS), dSheet = getSheet(SHEETS.DETAILS);
+  const rData = rSheet.getDataRange().getValues();
   for(let i=rData.length-1; i>=1; i--) if(String(rData[i][COLS_FINAL.ID]) === String(id)) rSheet.deleteRow(i+1);
   const dData = dSheet.getDataRange().getValues();
   for(let i=dData.length-1; i>=1; i--) if(String(dData[i][1]) === String(id)) dSheet.deleteRow(i+1);
   return { success: true };
 }
+
 function rejectBulkWithComment(ids, comment) {
     const rSheet = getSheet(SHEETS.RECEIPTS), data = rSheet.getDataRange().getValues();
     ids.forEach(id => {
@@ -394,4 +490,132 @@ function rejectBulkWithComment(ids, comment) {
         }
     });
     return { success: true };
+}
+
+// ...カード明細照合機能...
+function uploadStatementAndAnalyze(fileData) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('サーバーが混み合っています。');
+  try {
+    const aiResult = callGeminiForStatement(fileData.base64, fileData.mimeType);
+    if (!aiResult.items || aiResult.items.length === 0) throw new Error('明細データが見つかりませんでした');
+
+    let detectedUser = '不明';
+    let detectedCard = String(aiResult.card_last4 || '').trim();
+    if (detectedCard || aiResult.card_holder) {
+       const uSheet = getSheet(SHEETS.USERS);
+       const uData = uSheet.getDataRange().getValues();
+       for(let i=1; i<uData.length; i++) {
+         const rowCardInfo = String(uData[i][2] || ''); 
+         const rowName = String(uData[i][0] || '');
+         if ((detectedCard && rowCardInfo.includes(detectedCard)) || 
+             (aiResult.card_holder && rowName.includes(aiResult.card_holder))) {
+             detectedUser = rowName;
+             const match = rowCardInfo.match(/\d{4}/);
+             if(match) detectedCard = match[0];
+             break;
+         }
+       }
+    }
+
+    const sSheet = getSheet(SHEETS.CARD_STATEMENT);
+    const now = new Date();
+    const newRows = aiResult.items.map(item => {
+       return [
+         Utilities.getUuid(), 
+         now,                 
+         detectedCard,        
+         aiResult.card_holder || detectedUser, 
+         item.date,           
+         item.store,          
+         Number(item.amount), 
+         '未照合',            
+         ''                   
+       ];
+    });
+
+    sSheet.getRange(sSheet.getLastRow() + 1, 1, newRows.length, newRows[0].length).setValues(newRows);
+    return { success: true, count: newRows.length, user: detectedUser, card: detectedCard };
+
+  } catch(e) { throw new Error(e.message); } finally { lock.releaseLock(); }
+}
+
+// 照合データの取得（フィルタ対応）
+function getReconciliationData(viewMode) {
+  const sSheet = getSheet(SHEETS.CARD_STATEMENT);
+  if (sSheet.getLastRow() <= 1) return [];
+  const sData = sSheet.getDataRange().getValues().slice(1);
+  
+  // viewMode === 'all' なら全件、それ以外('unmatched')なら未照合のみ
+  const statements = sData.filter(r => viewMode === 'all' || r[COLS_STATEMENT.STATUS] !== '照合済').map(r => ({
+     id: r[COLS_STATEMENT.ID],
+     card: r[COLS_STATEMENT.CARD_NUM],
+     holder: r[COLS_STATEMENT.HOLDER],
+     date: formatDate(r[COLS_STATEMENT.DATE]),
+     store: r[COLS_STATEMENT.STORE],
+     amount: Number(r[COLS_STATEMENT.AMOUNT]),
+     status: r[COLS_STATEMENT.STATUS]
+  }));
+
+  const rSheet = getSheet(SHEETS.RECEIPTS);
+  const rData = rSheet.getDataRange().getValues().slice(1);
+  const receipts = rData.map(r => ({
+     id: r[COLS_FINAL.ID],
+     date: formatDate(r[COLS_FINAL.USE_DATE]),
+     user: r[COLS_FINAL.USER],
+     store: r[COLS_FINAL.STORE],
+     amount: Number(r[COLS_FINAL.AMOUNT]),
+     cardName: r[COLS_FINAL.CARD_NAME]
+  }));
+
+  statements.forEach(stmt => {
+      // 照合済みなら候補計算スキップ
+      if(stmt.status === '照合済') {
+          stmt.candidates = [];
+          return;
+      }
+
+      const candidates = receipts.filter(rcpt => {
+          const isAmountMatch = rcpt.amount === stmt.amount;
+          return isAmountMatch; 
+      });
+
+      if (candidates.length > 0) {
+          stmt.candidates = candidates;
+          if (candidates.some(c => stmt.holder.includes(c.user))) {
+             stmt.status = '候補あり';
+          }
+      } else {
+          stmt.candidates = [];
+      }
+  });
+
+  return statements.reverse(); // 新しい順
+}
+
+// 紐付け実行関数
+function linkStatementToReceipt(statementId, receiptId) {
+    const sSheet = getSheet(SHEETS.CARD_STATEMENT);
+    const data = sSheet.getDataRange().getValues();
+    for(let i=1; i<data.length; i++) {
+        if(String(data[i][COLS_STATEMENT.ID]) === String(statementId)) {
+            sSheet.getRange(i+1, COLS_STATEMENT.STATUS + 1).setValue('照合済');
+            sSheet.getRange(i+1, COLS_STATEMENT.LINK_ID + 1).setValue(receiptId);
+            return { success: true };
+        }
+    }
+    return { success: false };
+}
+
+function callGeminiForStatement(base64, mimeType) {
+  if (!GEMINI_API_KEY) return {};
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY;
+  const prompt = "クレジットカード利用明細書の画像を解析してください。JSON出力。項目: card_last4(カード番号下4桁), card_holder(名義人), items:[{date(YYYY-MM-DD), store(店名), amount(数値)}]. ヘッダーや合計行は無視してください。";
+  const payload = { contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: mimeType, data: base64 } }] }] };
+  try {
+    const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
+    const json = JSON.parse(res.getContentText());
+    const text = json.candidates[0].content.parts[0].text;
+    return JSON.parse(text.replace(/```json|```/g, '').trim());
+  } catch (e) { return { items: [] }; }
 }
